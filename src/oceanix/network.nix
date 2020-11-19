@@ -1,13 +1,17 @@
-# this is a supporting file for the oceanix command
-
-# it's a function which builds a single json file, which tells oceanix
-# what to provision & deploy.
-
+# This is a supporting file for the oceanix command. Its functions are:
+# 1. to build a network description file, which is a json that contains
+#    information oceanix uses to provision and deploy machines
+# 2. to build disk images to upload to digitalocean as starting points
 {
-  network-file,
-  create-image ? null,
-  pkgs ? (import <nixpkgs> {}),
-  hosts ? "{}"
+  network-file,                     # this is the path to the network file
+  create-image ? null,              #  if set, name of a machine in the
+                                    #  network; causes output to be a
+                                    #  disk image rather than a network
+                                    #  file
+  pkgs ? (import <nixpkgs> {}),     # the nixpkgs to use
+  hosts ? "{}"                      # map from existing hostname to ip
+                                    #  address, used to construct hosts
+                                    #  file
 }:
 let
   lib = pkgs.lib;
@@ -16,10 +20,9 @@ let
   builtins.intersectAttrs
   (builtins.listToAttrs (map (x:{name=x; value=true;}) list))
   set;
-
-  hostsMap = builtins.fromJSON hosts;
   
   network = import network-file;
+  
   defaults = {
     region = "lon1";
     size = "s-1vcpu-2gb";
@@ -33,10 +36,10 @@ let
     (name: value: (defaults // value))
     (builtins.removeAttrs network ["network"]);
 
-  # cook up hosts file - since machines can be replicated we have a
-  # bit of trickery required here
+  # cook up hosts file, by looking in the hosts argument for all machines where host = true
   extraHosts =
     let
+      hostsMap = builtins.fromJSON hosts;
       hostMachines = lib.mapAttrsToList
            (n: v: {host = n; copies = if v.host then v.copies else 0; })
            machines;
@@ -51,9 +54,11 @@ let
     in builtins.concatStringsSep "\n" hostLines;
   
   evalConfig = import "${pkgs.path}/nixos/lib/eval-config.nix";
-
   machineConfig = machine-name : # a function which evals a machine's
-                                 # config to a final form
+                                 # config to a final form. This calls
+                                 # evalConfig with our extra config
+                                 # plugged in on top of the user's
+                                 # input
   (evalConfig {
     modules =
       let
@@ -67,10 +72,10 @@ let
         };
       in
       [
-        ./digitalocean.nix # required config
+        ./digitalocean.nix # required config to make DO work
         machine.module # user config
-        ssh-module # maybe root key
-        hosts-module # hostnames
+        ssh-module # maybe root key, if specified
+        hosts-module # extra hosts ip address mapping.
       ];
   }).config;
 
@@ -89,22 +94,27 @@ let
     format = "qcow2-compressed";
     name = machine-name;
   };
-  
-  buildMachine = machine-name : # this outputs some stuff to go in a
-                                # json file
+
+  # this makes the json description of a machine that oceanix uses
+  buildMachine = machine-name : 
   let machine = machines."${machine-name}"; in
   {
     name = machine-name;
     value =
-      (selectAttrs machine # the deployment info
-         ["size" "region" "ssh-key" "image" "copies" "host"]) //
-      { system = system-root machine-name; }; # and the system profile to deploy
+      # the deployment info
+      (selectAttrs machine ["size" "region" "ssh-key" "image" "copies" "host"]) //
+      # plus the system profile to deploy
+      { system = system-root machine-name; }; 
   };
-  
+
+  # description for all machines
   result = builtins.listToAttrs (
     map buildMachine (builtins.attrNames machines)
   );
 in
+
+# and now the actual action
+
 if create-image != null then buildImage create-image
 else
 pkgs.writeTextFile
