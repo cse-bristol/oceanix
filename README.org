@@ -30,6 +30,19 @@ You need a network file, like this:
   }
 #+END_SRC
 
+Things you can say about a machine or defaults are:
+
+- size :: a digitalocean size slug
+- region :: a digitalocean region slug
+- ssh-key :: an ssh public key; this will be enabled for root ssh login on the machine, and also added to digitalocean's cloud-init setup.
+- image :: either the numeric ID of an image, or the *name* of an image. Not a slug, because custom iamges have no slugs.
+- copies :: an integer; if > 1, this machine will be replaced with machine-1 machine-2 ... machine-n.
+- host :: true/false, if true this machine's ip address will be baked into /etc/hosts on all the machines against its name. For copies > 1 the addresses of every copy will be baked in.
+
+  This can only work after the machines are all provisioned, so if using this you either need to do provision, then deploy, or you need to deploy and deploy again.
+
+  The second is only safe if you don't have services that will die when they can't resolve another machine or whatever.
+
 You need to export ~DIGITALOCEAN_ACCESS_TOKEN~ to talk to the API.
 
 Commands you can do are then:
@@ -96,3 +109,12 @@ You could use this to create a "blank" starting image with an empty config, or t
 - Management of regions in general is fairly poor.
 - If stuff goes wrong you don't get much help
 - Some default configuration is baked into ~digitalocean.nix~, which you can't replace right now.
+- The nix evaluation is done for every machine in the whole system in one go, which uses up a lot of memory if you have a lot of machines.
+  
+  If you have a lot of identical machines you can say ~copies = N~ on them though.
+- If you are using hostnames and you do a straight deploy, you may need to deploy again to get the right IP addresses in /etc/hosts.
+
+  The build will warn you about this though.
+- If you say ~deploy~ or ~provision~ or ~delete~ it will just do it without asking, which may cost a tonne of money, or destroy critical user data.
+- Host key checking is off, which is clearly not what anyone wants
+

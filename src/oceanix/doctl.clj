@@ -57,8 +57,7 @@
       (:id key)
 
       (-> (doctl "compute" "ssh-key" "create"
-                 "--name" name
-                 "--public-key" public-key)
+                 name "--public-key" public-key)
           (first)
           (:id)))))
 
@@ -93,3 +92,15 @@
 
 (defn size-list []
   (doctl "compute" "size" "list"))
+
+(defn tag-hosts
+  "Return a map from name to IP for hosts in a tag.
+  Duplicate names will be ignored."
+  [tag]
+  (if (string/blank? tag)
+    {}
+    (->> (for [droplet (droplet-list :tag-name tag)
+               :let [ip (public-ip droplet)]
+               :when ip]
+           [(:name droplet) ip])
+         (into {}))))

@@ -21,6 +21,8 @@
 (def out-lock (Object.))
 (def err-lock (Object.))
 
+(def ^:dynamic *sh-env* {})
+
 (defn sh* [args opts]
   (let [cmd     (first args)
         id      (swap! id inc)
@@ -33,9 +35,13 @@
 
           result (bbp/process
                   (vec args)
-                  (cond-> opts
-                    tee-out (dissoc :out)
-                    tee-err (dissoc :err)))
+                  (-> (cond-> opts
+                        tee-out (dissoc :out)
+                        tee-err (dissoc :err)
+
+                        (not-empty *sh-env*)
+                        (update :env #(merge *sh-env* %)))
+                      ))
           
           out (when tee-out
                 (let [real-out (:out result)

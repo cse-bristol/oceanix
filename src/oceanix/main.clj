@@ -38,14 +38,17 @@
 
 (defn build [args]
   (cond
-    (not= 1 (count args))
-    (usage "usage: oceanix build <network.nix>")
+    (< (count args) 1)
+    (usage "usage: oceanix build <network.nix> [<tag-name>]
+Note that omitting <tag-name> will mean a rebuild if you have names in the hosts file")
 
     (not (.exists (io/file (first args))))
     (usage (str (first args) " not found"))
 
     :else
-    (do (ops/build (first args)) nil)))
+    (do (ops/build (first args)
+                   (dc/tag-hosts (second args)))
+        nil)))
 
 (defn print-plan [plan opts]
   (doseq [a plan]
@@ -103,8 +106,10 @@
     (usage (str (first args) " not found"))
 
     :else
-    (let [build-result (ops/build (first args))
-          plan         (ops/plan  build-result (second args))]
+    (let [[network-file tag] args
+          existing-machines (dc/tag-hosts tag)
+          build-result      (ops/build network-file existing-machines)
+          plan              (ops/plan build-result tag)]
       (println "Price of deployment:")
       (print-price build-result)
       (println)
@@ -112,7 +117,17 @@
       (print-plan plan opts)
       (when-not dry-run
         (let [result (ops/realize-plan plan opts)]
-          (print-plan result opts))))))
+          (print-plan result opts))
+
+        (let [host-machines  (keep (fn [[k v]] (when (:host v) k))
+                                   build-result)]
+          (when (seq host-machines)
+            (let [existing-machines (select-keys existing-machines
+                                                 host-machines)
+                  new-machines (select-keys (dc/tag-hosts tag)
+                                            host-machines)]
+              (when (not= existing-machines new-machines)
+                (println "Hosts have changed, so you should deploy again!")))))))))
 
 (defn destroy [args]
   (cond

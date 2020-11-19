@@ -19,26 +19,45 @@
    (fn [a k v] (assoc a (keyword k) v))
    {} m))
 
-(defn build [network-file]
-  (let [json (-> (io/file network-file)
+(defn build
+  "Evaluate the network in `network-file`, and read the result.
+  This result defines the hosts to create & deploy.
+
+  `tag-hosts` should map host names to ip addresses; this is naturally
+  a bit circular, since a provisioning operation is needed to know ips.
+
+  Rather than solving this properly, we just rerun the build / deploy
+  until this is stable.
+  "
+  [network-file tag-hosts]
+  (let [tag-hosts (json/generate-string (or tag-hosts {}))
+
+        json (-> (io/file network-file)
                  (.getCanonicalPath)
                  (->> (sh! "nix-build"
                            network.nix
-                           "--argstr"
-                           "network-file"))
-                 
+                           "--argstr" "hosts" tag-hosts
+                           "--argstr" "network-file"))
                  (string/trim)
                  (slurp)
                  (json/parse-string))]
     (reduce-kv
-     (fn [a k v] (assoc a k (keywordize-keys v)))
+     (fn [a k v]
+       (let [v (keywordize-keys v)
+             copies (:copies v 1)]
+         (if (> copies 1)
+           (->> (for [i (range copies)] [(str k "-" (inc i)) v])
+                (into {})
+                (merge a))
+           (assoc a k v))))
      {} json)))
 
 (defn plan [build-result tag]
   (let [defs (vals build-result)
 
         ssh-keys ; we don't build these in parallel in case we kill
-                 ; the API
+                 ; the API. TODO UGLY: we create the key whilst
+                 ; planning, which is wrong.
         (->> (map :ssh-key defs)
              (set)
              (reduce
@@ -124,9 +143,13 @@
   (when-not only-provision
     (let [system (:system source)
           host (str "root@" (dc/public-ip target))]
-      (sh! "nixops-copy-closure" "--to" host "-s" system)
-      (sh! "ssh" host "nix-env" "--profile" system-profile "--set" system)
-      (sh! "ssh" host (str system "/activate")))))
+      ;; TODO really disable key checks - urgh
+      (binding [proc/*sh-env* (merge
+                               (into {} (System/getenv))
+                               {"NIX_SSHOPTS" "-T -oStrictHostKeyChecking=no"})]
+        (sh! "nix-copy-closure" "--to" host "-s" system))
+      (sh! "ssh" "-T" "-oStrictHostKeyChecking=no" host "nix-env" "--profile" system-profile "--set" system)
+      (sh! "ssh" "-T" "-oStrictHostKeyChecking=no" host (str system "/activate")))))
 
 (defmethod realize-action :create
   [{:keys [source]} o]
@@ -138,6 +161,7 @@
          :region (:region source)
          :size (:size source)
          :tag (:tag source))]
+    
     (realize-action
      {:action :deploy :source source :target target}
      o)))
@@ -224,11 +248,9 @@
       (outcome a)
       )))
 
-
 (defn create-image [network-file machine target]
   (sh! "nix-build" network.nix
        "--argstr" "network-file"
        (.getCanonicalPath (io/file network-file))
        "--argstr" "create-image" machine
        "--out-link" target))
-
