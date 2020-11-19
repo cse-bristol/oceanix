@@ -112,7 +112,7 @@ You could use this to create a "blank" starting image with an empty config, or t
 * Limitations
 
 - If you change a machine's size or region, this is not aligned later
-- Management of regions in general is fairly poor.
+  Management of regions in general is fairly poor.
 - If stuff goes wrong you don't get much help
 - Some default configuration is baked into ~digitalocean.nix~, which you can't replace right now.
 - The nix evaluation is done for every machine in the whole system in one go, which uses up a lot of memory if you have a lot of machines.
@@ -121,6 +121,6 @@ You could use this to create a "blank" starting image with an empty config, or t
 - If you are using hostnames and you do a straight deploy, you may need to deploy again to get the right IP addresses in /etc/hosts.
 
   The build will warn you about this though.
-- If you say ~deploy~ or ~provision~ or ~delete~ it will just do it without asking, which may cost a tonne of money, or destroy critical user data.
+- +If you say ~deploy~ or ~provision~ or ~delete~ it will just do it without asking, which may cost a tonne of money, or destroy critical user data.+
 - Host key checking is off, which is clearly not what anyone wants
 
