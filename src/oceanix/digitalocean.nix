@@ -11,22 +11,47 @@
   boot.initrd.availableKernelModules = [ "virtio_net" "virtio_pci" "virtio_mmio" "virtio_blk" "virtio_scsi" "9p" "9pnet_virtio" ];
   boot.initrd.kernelModules = [ "virtio_balloon" "virtio_console" "virtio_rng" ];
 
-  # Select internationalisation properties.
-  i18n.defaultLocale = "en_GB.UTF-8";
-  console = {
-    font = "Lat2-Terminus16";
-    keyMap = "uk";
-  };
-
-  time.timeZone = "Europe/London";
   services.openssh.enable = true;
 
-  environment.systemPackages =  [
-    pkgs.rxvt_unicode.terminfo
-  ];
-
-  nixpkgs.config.allowUnfree = true;
   nix.trustedUsers = [ "@wheel" ];
+
+  systemd.services."keys@" = {
+    description = "Awaiting presence of key %i";
+
+    enable = true;
+    serviceConfig =
+      let
+        iw = "${pkgs.inotifyTools}/bin/inotifywait";
+        until-there = pkgs.writeScript "until-there.sh" ''
+          #!${pkgs.bash}/bin/bash
+          tgt="/run/keys/$1"
+          (while read f; do if [ "$f" = "$1" ]; then break; fi; done \
+              < <(${iw} -qm --format '%f' -e create,move /run/keys) ) &
+
+          if [[ -e "$tgt" ]]; then
+            kill %1
+            exit 0
+          fi
+          wait %1
+        '';
+        until-gone = pkgs.writeScript "until-gone-sh" ''
+          #!${pkgs.bash}/bin/bash
+          tgt="/run/keys/$1"
+          ${iw} -qq -e delete_self "$tgt" &
+          if [[ ! -e "${keyCfg.path}" ]]; then
+             exit 0
+          fi
+          wait %1
+        '';
+      in
+      {
+        TimeoutStartSec = "infinity";
+        Restart = "always";
+        RestartSec = "500ms";
+        ExecStartPre = "${until-there} %i";
+        ExecStart = "${until-gone} %i";
+      };
+  };
 
   imports = [
      (<nixpkgs/nixos> + /maintainers/scripts/openstack/openstack-image.nix)
