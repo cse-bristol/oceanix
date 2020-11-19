@@ -5,6 +5,12 @@ A small program to do nix deployments & provisioning into digitalocean.
 
 This has a small subset of the features in nixops.
 
+* Installation
+
+#+BEGIN_SRC sh
+$ nix-env -i -f .
+#+END_SRC
+
 * Usage
 
 You need a network file, like this:
