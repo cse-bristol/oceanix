@@ -5,6 +5,94 @@ A small program to do nix deployments & provisioning into digitalocean.
 
 This has a small subset of the features in nixops.
 
-Unlike nixops, all state is inferred from digitalocean.
+* Usage
 
-A deployment is done into a digitalocean tag; machines within a deployment have to have a unique name, and so these can be mapped to DO machine names.
+You need a network file, like this:
+
+#+BEGIN_SRC nix
+  {
+    network = {
+      name = "my network";
+      defaults = {
+        region = "lon1";
+        ssh-key = "SOME PUBLIC KEY";
+        size = "c-8";
+      };
+    };
+
+    machine1 = {
+      size = "c-32";
+      # inherits defaults
+      module = {config, pkgs, ...} : {
+        # etc etc
+      };
+    };
+  }
+#+END_SRC
+
+You need to export ~DIGITALOCEAN_ACCESS_TOKEN~ to talk to the API.
+
+Commands you can do are then:
+
+#+BEGIN_SRC sh
+$ oceanix build network.nix
+#+END_SRC
+
+This will produce a json file describing the network state.
+
+#+BEGIN_SRC sh
+$ oceanix plan network.nix network-tag
+....
+
+| :size | :cpu |   :mem | :hourly1 | :monthly1 | :hourly | :monthly |
+|-------+------+--------+----------+-----------+---------+----------|
+|  c-32 |   96 | 196608 |  0.95238 |       640 |    2.86 |   1920.0 |
+
+Plan:
+CREATE+UPDATE m1 c-32
+CREATE+UPDATE m2 c-32
+CREATE+UPDATE m3 c-32
+
+#+END_SRC
+
+This will build the network and then tell you:
+
+- What it will cost when running and what resources it has
+- What operations are needed to realize the plan
+
+#+BEGIN_SRC sh
+$ oceanix provision network.nix network-tag
+#+END_SRC
+
+This will build the network and create/destroy appropriate machines, but not do any deployment.
+
+#+BEGIN_SRC sh
+$ oceanix deploy network.nix network-tag
+#+END_SRC
+
+This will build, provision, and then deploy all the machines in the network.
+
+* Disk images
+
+oceanix depends on having a nixos image to start from (unlike nixops, which uses a fearsome script to brain-wipe an existing install).
+
+It can create you an image with
+
+#+BEGIN_SRC sh
+$ oceanix create-image network.nix machine-name image-dir
+#+END_SRC
+
+The resulting image will be in ~image-dir/nixos.qcow2~.
+
+You can upload this image to digitalocean, and refer to it by name or ID in the network configuration. Although the image will have the cloud autoconfig thing baked into it, I don't know if that works, so make sure you have put in a nice old-fashioned ssh public key through ~network.defaults.ssh-key~ or ~machine-name-here.ssh-key~, so you can connect.
+
+If you use a name, the first image with that name in the associated region will be selected.
+
+You could use this to create a "blank" starting image with an empty config, or to create populated starting images which have any heavy dependencies you need.
+
+* Limitations
+
+- If you change a machine's size or region, this is not aligned later
+- Management of regions in general is fairly poor.
+- If stuff goes wrong you don't get much help
+- Some default configuration is baked into ~digitalocean.nix~, which you can't replace right now.
