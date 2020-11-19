@@ -1,0 +1,12 @@
+#!/usr/bin/env bb
+
+(require '[babashka.classpath :refer [add-classpath]])
+(require '[clojure.java.io :as io])
+
+(add-classpath
+  (-> *file* (io/file) (.getParent) (io/file "src")
+      (.getCanonicalPath)))
+
+(require '[oceanix.main :as main])
+
+(main/main *command-line-args*)

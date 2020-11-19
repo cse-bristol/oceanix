@@ -1,0 +1,10 @@
+#+TITLE: oceanix
+#+AUTHOR: cse
+
+A small program to do nix deployments & provisioning into digitalocean.
+
+This has a small subset of the features in nixops.
+
+Unlike nixops, all state is inferred from digitalocean.
+
+A deployment is done into a digitalocean tag; machines within a deployment have to have a unique name, and so these can be mapped to DO machine names.
