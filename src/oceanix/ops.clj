@@ -67,7 +67,10 @@
                  :ssh-key-id
                  (get ssh-keys (:ssh-key d))
                  :image-id
-                 (get images [(:region d) (:image d)]))])
+                 (if (integer? (:image d))
+                   (:image d)
+                   (get images [(:region d) (:image d)]))
+                 )])
              (into {}))
 
         existing
