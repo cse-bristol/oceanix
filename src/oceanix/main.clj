@@ -4,13 +4,14 @@
             [clojure.tools.cli :refer [parse-opts]]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]
+            [clojure.string :as string]
             ))
 
 (declare build deploy destroy create-image)
 
-(defn usage [msg]
+(defn usage [& msg]
   (binding [*out* *err*]
-    (println msg)
+    (println (string/join "\n" msg))
     (System/exit 1)))
 
 (defn main [args]
@@ -97,37 +98,56 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
      [:size :cpu :mem :hourly1 :monthly1 :hourly :monthly]
      rows)))
 
+(defn confirm? [& {:keys [response] :or {response "yes"}}]
+  (print "Enter" response "to continue: ")
+  (flush)
+  (= (read-line) response))
+
 (defn deploy [args & {:keys [dry-run] :as opts}]
-  (cond
-    (not= 2 (count args))
-    (usage "usage: oceanix <provision | plan | deploy> <network.nix> <target-tag>")
+  (let [{:keys [options arguments errors summary]}
+        (parse-opts
+         args
+         [[nil "--threads N" "How many operations to do in parallel"
+           :default 4 :parse-fn #(Integer/parseInt %)]
+          [nil "--force" "Whether to ask or just go ahead and do it"]
+          ["-h" "--help"]])
+        opts (merge opts options)
+        args arguments
+        ]
+    (cond
+      (or (:help opts) (not= 2 (count args)) (seq errors))
+      (usage (string/join "\n" errors)
+             "usage: oceanix <provision | plan | deploy> [flags] <network.nix> <target-tag>"
+             summary)
+      
+      (not (.exists (io/file (first args))))
+      (usage (str (first args) " not found"))
 
-    (not (.exists (io/file (first args))))
-    (usage (str (first args) " not found"))
+      :else
+      (let [[network-file tag] args
+            existing-machines (dc/tag-hosts tag)
+            build-result      (ops/build network-file existing-machines)
+            plan              (ops/plan build-result tag)]
+        (println)
+        (print-price build-result)
+        (println)
+        (println "Plan:")
+        (print-plan plan opts)
+        (when (and (not dry-run)
+                   (not (some (comp #{:error} :outcome) plan))
+                   (or (:force opts) (confirm?)))
+          (let [result (ops/realize-plan plan opts)]
+            (print-plan result opts))
 
-    :else
-    (let [[network-file tag] args
-          existing-machines (dc/tag-hosts tag)
-          build-result      (ops/build network-file existing-machines)
-          plan              (ops/plan build-result tag)]
-      (println "Price of deployment:")
-      (print-price build-result)
-      (println)
-      (println "Plan:")
-      (print-plan plan opts)
-      (when-not dry-run
-        (let [result (ops/realize-plan plan opts)]
-          (print-plan result opts))
-
-        (let [host-machines  (keep (fn [[k v]] (when (:host v) k))
-                                   build-result)]
-          (when (seq host-machines)
-            (let [existing-machines (select-keys existing-machines
-                                                 host-machines)
-                  new-machines (select-keys (dc/tag-hosts tag)
-                                            host-machines)]
-              (when (not= existing-machines new-machines)
-                (println "Hosts have changed, so you should deploy again!")))))))))
+          (let [host-machines  (keep (fn [[k v]] (when (:host v) k))
+                                     build-result)]
+            (when (seq host-machines)
+              (let [existing-machines (select-keys existing-machines
+                                                   host-machines)
+                    new-machines (select-keys (dc/tag-hosts tag)
+                                              host-machines)]
+                (when (not= existing-machines new-machines)
+                  (println "Hosts have changed, so you should deploy again!"))))))))))
 
 (defn destroy [args]
   (cond
@@ -139,8 +159,10 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
           plan     (for [machine machines]
                      {:action :delete :target machine})]
       (print-plan plan {})
-      (let [result (ops/realize-plan plan {})]
-        (print-plan result {})))))
+      (when (and (not-empty plan)
+                 (confirm?))
+        (let [result (ops/realize-plan plan {})]
+          (print-plan result {}))))))
 
 (defn create-image [args]
   (let [[network-file machine-name image-file]

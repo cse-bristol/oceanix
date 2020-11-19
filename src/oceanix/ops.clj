@@ -62,7 +62,7 @@
              (set)
              (reduce
               (fn [a key]
-                (assoc a key (dc/ssh-key-ensure tag key)))
+                (assoc a key (delay (dc/ssh-key-ensure tag key))))
               {}))
         
         images ; we do build these in parallel since we are only
@@ -78,18 +78,22 @@
         ;; and the tag to deploy into
         targets
         (->> (for [[name d] build-result]
-               [name
-                (assoc
-                 d
-                 :name name
-                 :tag tag
-                 :ssh-key-id
-                 (get ssh-keys (:ssh-key d))
-                 :image-id
-                 (if (integer? (:image d))
-                   (:image d)
-                   (get images [(:region d) (:image d)]))
-                 )])
+               (let [image-id
+                     (if (integer? (:image d))
+                       (:image d)
+                       (get images [(:region d) (:image d)]))]
+                 [name
+                  (cond->
+                      (assoc
+                       d
+                       :name name
+                       :tag tag
+                       :ssh-key-id (get ssh-keys (:ssh-key d))
+                       :image-id image-id)
+                    (nil? image-id)
+                    (assoc :outcome :error
+                           :error (str "image " (:image d) "not found")))
+                  ]))
              (into {}))
 
         existing
@@ -156,12 +160,19 @@
   (let [target
         (dc/droplet-create
          (:name source)
-         (:ssh-key-id source)
+         (let [id (:ssh-key-id source)
+               id (if (instance? clojure.lang.Delay id)
+                    (deref id) id)]
+           (when-not id
+             (throw (ex-info "ssh key id missing"
+                             {:key (:ssh-key source)})))
+           id)
+         
          :image (:image-id source)
          :region (:region source)
          :size (:size source)
-         :tag (:tag source))]
-    
+         :tag (:tag source)
+         )]
     (realize-action
      {:action :deploy :source source :target target}
      o)))

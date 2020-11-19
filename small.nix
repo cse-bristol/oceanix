@@ -9,6 +9,7 @@
 
   m1 = {
     host = true;
+    copies = 2;
     module = {config, pkgs, ...} : {
       environment.systemPackages = [pkgs.htop];
       users.motd = "HELLOOOO";
