@@ -45,8 +45,7 @@
        (first)
        (:id)))
 
-(defn ssh-key-list []
-  (doctl "compute" "ssh-key" "list"))
+(defn ssh-key-list [] (doctl "compute" "ssh-key" "list"))
 
 (defn ssh-key-ensure [name public-key]
   (let [keys (ssh-key-list)

@@ -6,28 +6,47 @@
             [clojure.string :as string]))
 
 (def ^:const RESET "\033[0m")
-(def ^:const BLACK  "\033[0;30m");   // BLACK
-(def ^:const RED  "\033[0;31m");     // RED
-(def ^:const GREEN  "\033[0;32m");   // GREEN
-(def ^:const YELLOW  "\033[0;33m");  // YELLOW
-(def ^:const BLUE  "\033[0;34m");    // BLUE
-(def ^:const PURPLE  "\033[0;35m");  // PURPLE
-(def ^:const CYAN  "\033[0;36m");    // CYAN
-(def ^:const WHITE  "\033[0;37m");   // WHITE
+(def ^:const BLACK  "\033[0;30m")
+(def ^:const RED  "\033[0;31m")
+(def ^:const GREEN  "\033[0;32m")
+(def ^:const YELLOW  "\033[0;33m")
+(def ^:const BLUE  "\033[0;34m")
+(def ^:const PURPLE  "\033[0;35m")
+(def ^:const CYAN  "\033[0;36m")
+(def ^:const WHITE  "\033[0;37m")
+(def ^:const BOLD "\033[0;1m")
 
-(def colors [RED GREEN YELLOW BLUE PURPLE CYAN WHITE])
+(def ^:const BLACK_BACKGROUND  "\033[40m")
+(def ^:const RED_BACKGROUND  "\033[41m")
+(def ^:const GREEN_BACKGROUND  "\033[42m")
+(def ^:const YELLOW_BACKGROUND  "\033[43m")
+(def ^:const BLUE_BACKGROUND  "\033[44m")
+(def ^:const PURPLE_BACKGROUND  "\033[45m")
+(def ^:const CYAN_BACKGROUND  "\033[46m")
+
+(def colors [RED GREEN YELLOW BLUE PURPLE CYAN
+             BLACK_BACKGROUND RED_BACKGROUND
+             GREEN_BACKGROUND YELLOW_BACKGROUND
+             BLUE_BACKGROUND PURPLE_BACKGROUND
+             CYAN_BACKGROUND])
 
 (defonce id (atom 0))
 (def out-lock (Object.))
 (def err-lock (Object.))
 
 (def ^:dynamic *sh-env* {})
+(def ^:dynamic *identifier* nil)
+
+(defn colour [string]
+  (let [id (swap! id inc)]
+    (str (nth colors (mod id (count colors))) string RESET)))
 
 (defn sh* [args opts]
   (let [cmd     (first args)
         id      (swap! id inc)
-        id      (str (nth colors (mod id (count colors)))
-                     id " " cmd RESET)]
+        idstr   (or (and *identifier* (str *identifier* " " id))
+                    (str (nth colors (mod id (count colors))) id RESET))
+        id      (str idstr " " BOLD cmd RESET)]
     (locking out-lock
       (println id (string/join " " (rest args))))
     (let [tee-out (= :tee (:out opts))
@@ -72,25 +91,26 @@
                      (.toString err))))
           
           result @result
+          result
+          (cond-> {:exit (:exit result)
+                   :out (:out result)
+                   :err (:err result)
+                   :cmd (vec args)}
+            tee-out (assoc :out @out)
+            tee-err (assoc :err @err))
           ]
       (when-not (zero? (:exit result))
         (locking err-lock
           (println id "exit" (:exit result))))
-      (cond-> {:exit (:exit result)
-               :out (:out result)
-               :err (:err result)
-               :cmd (vec args)}
-        tee-out (assoc :out @out)
-        tee-err (assoc :err @err)))))
+      (when-let [valid-exit-code (:valid-exit-code opts)]
+        (when-not (valid-exit-code (:exit result))
+          (throw
+           (ex-info (str "error running " (string/join " " args))
+                    (assoc result
+                           :type :exec)))))
+      result)))
 
 (defn sh [& args] (sh* args {:out :string :err :tee}))
 
 (defn sh! [& args]
-  (let [result (sh* args {:out :tee :err :tee})]
-    (when-not (zero? (:exit result))
-      (throw (ex-info (str "error running " (first args))
-                      {:type :exec
-                       :command (vec args)
-                       :err (:err result)
-                       :out (:out result)})))
-    (:out result)))
+  (:out (sh* args {:out :tee :err :tee :valid-exit-code #{0}})))

@@ -1,11 +1,13 @@
 (ns oceanix.main
   (:require [oceanix.ops :as ops]
             [oceanix.doctl :as dc]
+            [oceanix.proc :as proc]
             [clojure.tools.cli :refer [parse-opts]]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]
             [clojure.string :as string]
-            ))
+
+            [clojure.set :as set]))
 
 (declare build deploy destroy create-image)
 
@@ -113,6 +115,8 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
           ["-h" "--help"]])
         opts (merge opts options)
         args arguments
+
+        {:keys [only-provision force]} opts
         ]
     (cond
       (or (:help opts) (not= 2 (count args)) (seq errors))
@@ -126,28 +130,40 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
       :else
       (let [[network-file tag] args
             existing-machines (dc/tag-hosts tag)
-            build-result      (ops/build network-file existing-machines)
-            plan              (ops/plan build-result tag)]
+            build-out      (ops/build network-file existing-machines)
+            plan              (ops/plan build-out tag)]
         (println)
-        (print-price build-result)
-        (println)
+        (print-price build-out)
         (println "Plan:")
         (print-plan plan opts)
+        
         (when (and (not dry-run)
                    (not (some (comp #{:error} :outcome) plan))
-                   (or (:force opts) (confirm?)))
-          (let [result (ops/realize-plan plan opts)]
-            (print-plan result opts))
+                   (or force (confirm?)))
+          (let [host-machines    (keep (fn [[k v]] (when (:addHost v) k)) build-out)
+                missing-machines (set/difference (set host-machines)
+                                                 (set (keys existing-machines)))
 
-          (let [host-machines  (keep (fn [[k v]] (when (:addHost v) k))
-                                     build-result)]
-            (when (seq host-machines)
-              (let [existing-machines (select-keys existing-machines
-                                                   host-machines)
-                    new-machines (select-keys (dc/tag-hosts tag)
-                                              host-machines)]
-                (when (not= existing-machines new-machines)
-                  (println "Hosts have changed, so you should deploy again!"))))))))))
+                [plan partial-result build-out]
+                (if (or (empty? missing-machines) only-provision)
+                  [plan [] build-out]
+                  (do
+                    (println "Provisioning before rebuild due to missing machines in hosts files")
+                    (let [result (ops/realize-plan plan (assoc opts :only-provision true))
+                          new-machines (dc/tag-hosts tag)
+                          new-build (ops/build network-file new-machines)
+                          new-plan  (ops/plan new-build tag)]
+                      (println "Provisioning result:")
+                      (print-plan result opts)
+
+                      [new-plan result new-build])))
+                
+                extra-result (ops/realize-plan plan opts)
+                whole-result (concat partial-result extra-result)
+                ]
+            (print-plan whole-result opts)
+            ))
+        ))))
 
 (defn destroy [args]
   (cond
@@ -157,10 +173,10 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
     :else
     (let [machines (dc/droplet-list :tag-name (first args))
           plan     (for [machine machines]
-                     {:action :delete :target machine})]
+                     {:action :delete :target machine
+                      :colour-name (proc/colour (:name machine))})]
       (print-plan plan {})
-      (when (and (not-empty plan)
-                 (confirm?))
+      (when (and (not-empty plan) (confirm?))
         (let [result (ops/realize-plan plan {})]
           (print-plan result {}))))))
 

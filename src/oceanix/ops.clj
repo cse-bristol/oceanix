@@ -43,7 +43,9 @@
                  (json/parse-string))]
     (reduce-kv
      (fn [a k v]
-       (let [v (keywordize-keys v)
+       (let [v (-> v
+                   (keywordize-keys)
+                   (update :keys #(map keywordize-keys (vals %))))
              copies (:copies v 1)]
          (if (> copies 1)
            (->> (for [i (range copies)] [(str k "-" (inc i)) v])
@@ -58,7 +60,7 @@
         ssh-keys ; we don't build these in parallel in case we kill
                  ; the API. TODO UGLY: we create the key whilst
                  ; planning, which is wrong.
-        (->> (map :ssh-key defs)
+        (->> (map :sshKey defs)
              (set)
              (reduce
               (fn [a key]
@@ -113,20 +115,26 @@
 
         (let [[machine-name & all-names] all-names
               target-conf (get targets machine-name)
-              [existing & extra] (get existing machine-name)
 
+              colour-name (proc/colour machine-name)
+              
+              [existing & extra] (get existing machine-name)
+              
               action
               (cond
                 (and target-conf existing)
                 {:action :deploy
+                 :colour-name colour-name
                  :source target-conf
                  :target existing}
 
                 (and (not target-conf) existing)
-                {:action :delete :target existing}
+                {:action :delete :target existing
+                 :colour-name colour-name}
 
                 (and target-conf (not existing))
-                {:action :create :source target-conf})
+                {:action :create :source target-conf
+                 :colour-name colour-name})
               
               actions (conj actions action)
               ]
@@ -134,29 +142,61 @@
            all-names
            (if (seq extra)
              (reduce
-              (fn [a d] (conj a {:action :delete :target d}))
+              (fn [a d] (conj a {:action :delete :target d :colour-name (proc/colour (:name d))}))
               actions
               extra)
              actions)))))))
 
 (def ^:const system-profile "/nix/var/nix/profiles/system")
 
+(defn transfer-key [{:keys [name keyCommand keyFile user group permissions] :as key} host]
+  (let [key-str
+        (cond
+          (seq keyCommand)
+          (apply sh! keyCommand)
+
+          (and keyFile (not (.exists (io/file keyFile))))
+          (throw (ex-info (str keyFile " not found") (assoc key :host host)))
+
+          (and keyFile (.exists (io/file keyFile)))
+          (slurp (io/file keyFile))
+
+          :else
+          (throw (ex-info (str "key " name "could not be loaded") (assoc key :host host))))]
+    (proc/sh*
+     ["ssh" host (str "cat > \"/run/keys/" name "\"")]
+     {:in key-str :valid-exit-code #{0}})))
+
 (defmulti realize-action  (fn [a _] (:action a)))
+
 (defmethod realize-action :deploy
-  [{:keys [source target]} {:keys [only-provision]}]
+  [{:keys [source target] :as a} {:keys [only-provision]}]
   (when-not only-provision
     (let [system (:system source)
           host (str "root@" (dc/public-ip target))]
-      ;; TODO really disable key checks - urgh
       (binding [proc/*sh-env* (merge
                                (into {} (System/getenv))
                                {"NIX_SSHOPTS" "-T -oStrictHostKeyChecking=no"})]
         (sh! "nix-copy-closure" "--to" host "-s" system))
       (sh! "ssh" "-T" "-oStrictHostKeyChecking=no" host "nix-env" "--profile" system-profile "--set" system)
-      (sh! "ssh" "-T" "-oStrictHostKeyChecking=no" host (str system "/activate")))))
+      ;; transfer required keys
+
+      (let [keys (:keys source)] (doseq [key keys] (transfer-key key host)))))
+  a)
+
+(defmethod realize-action :activate
+  [{:keys [source target] :as a} {:keys [only-provision]}]
+
+  (when-not only-provision
+    (let [system (:system source)
+          host (str "root@" (dc/public-ip target))]
+      (sh! "ssh" "-T" "-oStrictHostKeyChecking=no" host
+           (str system "/bin/switch-to-configuration") "switch")))
+  a)
 
 (defmethod realize-action :create
   [{:keys [source]} o]
+
   (let [target
         (dc/droplet-create
          (:name source)
@@ -164,8 +204,8 @@
                id (if (instance? clojure.lang.Delay id)
                     (deref id) id)]
            (when-not id
-             (throw (ex-info "ssh key id missing"
-                             {:key (:sshKey source)})))
+             (throw (ex-info "ssh key id missing" {:key (:sshKey source)})))
+           
            id)
          
          :image (:image-id source)
@@ -178,13 +218,15 @@
      o)))
 
 (defmethod realize-action :delete
-  [{:keys [target]} _]
-  (dc/droplet-delete (:id target)))
+  [{:keys [target] :as a} _]
+  (dc/droplet-delete (:id target))
+  a)
 
 (defn realize-action* [a o]
   (try
-    (realize-action a o)
-    (assoc a :outcome :success)
+    (binding [proc/*identifier* (:colour-name a)]
+      (-> (realize-action a o)
+          (assoc :outcome :success)))
     (catch Exception e
       (assoc a
              :outcome :failure
@@ -195,27 +237,46 @@
 (defn realize-plan [plan {:keys [threads only-provision]
                           :or {threads 1 only-provision false}
                           :as opts}]
-  (if (= 1 threads)
-    (doall (map #(realize-action* % opts) plan))
-    (let [in  (async/chan)
-          out (async/chan)]
-      (async/pipeline-async
-       threads
-       out
-       (fn [a o]
-         (async/thread
-           (async/put! o (realize-action* a opts))
-           (async/close! o)))
-       in)
+  (let [result
+        (if (= 1 threads)
+          (doall (map #(realize-action* % opts) plan))
+          (let [in  (async/chan)
+                out (async/chan)]
+            (async/pipeline-async
+             threads
+             out
+             (fn [a o]
+               (async/thread
+                 (async/put! o (realize-action* a opts))
+                 (async/close! o)))
+             in)
 
-      (async/thread
-        (doseq [a plan] (async/put! in a))
-        (async/close! in))
+            (async/thread
+              (doseq [a plan] (async/put! in a))
+              (async/close! in))
 
-      (loop [all-out nil]
-        (when-let [r (async/<! out)]
-          (conj all-out r)
-          (recur all-out))))))
+            (loop [all-out nil]
+              (if-let [r (async/<! out)]
+                (recur (conj all-out r))
+                all-out))))
+        ]
+    (if (or only-provision
+            (not (every? (comp #{:success} :outcome) result)))
+      (do
+        (println "Not activating")
+        result)
+      
+      (do
+        (println "Activating configurations...")
+        (doall
+         (map 
+          (fn [task]
+            (cond-> task
+              (= :deploy (:action task))
+              (-> (assoc :action :activate)
+                  (realize-action* opts))))
+          result
+          ))))))
 
 (defmulti print-action (fn [a o] (:action a)))
 
@@ -224,6 +285,7 @@
       DESTROY  (str proc/YELLOW "DESTROY" proc/RESET)
       SUCCESS  (str proc/GREEN "OK" proc/RESET)
       ERROR    (str proc/RED "FAILED" proc/RESET)
+      ACTIVATE (str proc/GREEN "ACTIVATE" proc/RESET)
 
       outcome  (fn [a]
                  (case (:outcome a)
@@ -243,6 +305,9 @@
                          (println "  Unknown outcome: "
                                   (:outcome a)))))
       ]
+  (defmethod print-action :default [a o]
+    (println "What?" a))
+  
   (defmethod print-action :create [{:keys [source] :as a} o]
     (print (if (:only-provision o)
              CREATE (str CREATE "+" UPDATE)) 
@@ -257,7 +322,14 @@
     (when-not (:only-provision o)
       (print UPDATE (:name target) (dc/public-ip target))
       (outcome a)
-      )))
+      ))
+
+  (defmethod print-action :activate [{:keys [target] :as a} o]
+    (when-not (:only-provision o)
+      (print ACTIVATE (:name target) (dc/public-ip target))
+      (outcome a)
+      ))
+  )
 
 (defn create-image [network-file machine target]
   (sh! "nix-build" network.nix
