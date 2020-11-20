@@ -139,7 +139,7 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
           (let [result (ops/realize-plan plan opts)]
             (print-plan result opts))
 
-          (let [host-machines  (keep (fn [[k v]] (when (:host v) k))
+          (let [host-machines  (keep (fn [[k v]] (when (:addHost v) k))
                                      build-result)]
             (when (seq host-machines)
               (let [existing-machines (select-keys existing-machines

@@ -38,7 +38,7 @@
           #!${pkgs.bash}/bin/bash
           tgt="/run/keys/$1"
           ${iw} -qq -e delete_self "$tgt" &
-          if [[ ! -e "${keyCfg.path}" ]]; then
+          if [[ ! -e "$tgt" ]]; then
              exit 0
           fi
           wait %1

@@ -12,7 +12,7 @@
       (io/file)
       (.getCanonicalPath)))
 
-(def network.nix (support-file "network.nix"))
+(def network.nix (support-file "nix/network.nix"))
 
 (defn keywordize-keys [m]
   (reduce-kv
@@ -88,7 +88,7 @@
                        d
                        :name name
                        :tag tag
-                       :ssh-key-id (get ssh-keys (:ssh-key d))
+                       :ssh-key-id (get ssh-keys (:sshKey d))
                        :image-id image-id)
                     (nil? image-id)
                     (assoc :outcome :error
@@ -165,7 +165,7 @@
                     (deref id) id)]
            (when-not id
              (throw (ex-info "ssh key id missing"
-                             {:key (:ssh-key source)})))
+                             {:key (:sshKey source)})))
            id)
          
          :image (:image-id source)
