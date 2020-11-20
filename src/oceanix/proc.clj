@@ -25,12 +25,12 @@
 (def ^:const CYAN_BACKGROUND  "\033[46m")
 
 (def colors [RED GREEN YELLOW BLUE PURPLE CYAN
-             BLACK_BACKGROUND RED_BACKGROUND
-             GREEN_BACKGROUND YELLOW_BACKGROUND
+             (str BLACK  GREEN_BACKGROUND) (str BLACK YELLOW_BACKGROUND)
              BLUE_BACKGROUND PURPLE_BACKGROUND
              CYAN_BACKGROUND])
 
-(defonce id (atom 0))
+(defonce proc-id (atom 0))
+(defonce colr-id (atom 0))
 (def out-lock (Object.))
 (def err-lock (Object.))
 
@@ -38,14 +38,14 @@
 (def ^:dynamic *identifier* nil)
 
 (defn colour [string]
-  (let [id (swap! id inc)]
+  (let [id (swap! colr-id inc)]
     (str (nth colors (mod id (count colors))) string RESET)))
 
 (defn sh* [args opts]
   (let [cmd     (first args)
-        id      (swap! id inc)
+        id      (swap! proc-id inc)
         idstr   (or (and *identifier* (str *identifier* " " id))
-                    (str (nth colors (mod id (count colors))) id RESET))
+                    (colour (str id)))
         id      (str idstr " " BOLD cmd RESET)]
     (locking out-lock
       (println id (string/join " " (rest args))))

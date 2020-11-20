@@ -5,6 +5,12 @@
             [clojure.string :as string]))
 
 (defn doctl* [args]
+  (when-not
+      (contains?
+       (System/getenv)
+       "DIGITALOCEAN_ACCESS_TOKEN")
+    (throw (ex-info "No access token! You need to export DIGITALOCEAN_ACCESS_TOKEN for doctl to work" {})))
+  
   (let [{:keys [exit out err] :as x}
         (sh* (concat ["doctl"] args ["-o" "json"])
              {:err :tee :out :string})]

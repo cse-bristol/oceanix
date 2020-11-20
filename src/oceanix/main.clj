@@ -16,7 +16,7 @@
     (println (string/join "\n" msg))
     (System/exit 1)))
 
-(defn main [args]
+(defn real-main [args]
   (let [[c & args] args]
     (case c
       "build"
@@ -37,7 +37,21 @@
       "create-image"
       (create-image args)
 
-      (usage "usage: oceanix build | provision | plan | deploy | destroy | create-image"))))
+      (usage "usage: oceanix [--print-stack-trace] build | provision | plan | deploy | destroy | create-image"))))
+
+(defn main [args]
+  (let [[pst args] (if (= (first args) "--print-stack-trace")
+                     [true (rest args)]
+                     [false args])]
+    (if pst
+      (real-main args)
+      (try
+        (real-main args)
+        (catch Exception e
+          (println "Exception: " (ex-message e))
+          (doseq [[k v] (ex-data e)]
+            (println k v))
+          (println "   oceanix --print-stack-trace ... to get cause"))))))
 
 (defn build [args]
   (cond
@@ -93,12 +107,11 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
                       #(select-keys
                         % [:hourly :monthly :count :cpu :mem])
                       rows))
-                    (assoc :name "TOTAL"))))
-        ]
-
-    (pprint/print-table
-     [:size :cpu :mem :hourly1 :monthly1 :hourly :monthly]
-     rows)))
+                    (assoc :name "TOTAL"))))]
+    (with-out-str
+      (pprint/print-table
+       [:size :cpu :mem :hourly1 :monthly1 :hourly :monthly]
+       rows))))
 
 (defn confirm? [& {:keys [response] :or {response "yes"}}]
   (print "Enter" response "to continue: ")
@@ -131,11 +144,18 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
       (let [[network-file tag] args
             existing-machines (dc/tag-hosts tag)
             build-out      (ops/build network-file existing-machines)
-            plan              (ops/plan build-out tag)]
+            plan           (ops/plan build-out tag)
+            price-table    (print-price build-out)
+            ]
+
         (println)
-        (print-price build-out)
         (println "Plan:")
+        (println)
         (print-plan plan opts)
+        (println)
+
+        (println "Running cost:")
+        (println price-table)
         
         (when (and (not dry-run)
                    (not (some (comp #{:error} :outcome) plan))

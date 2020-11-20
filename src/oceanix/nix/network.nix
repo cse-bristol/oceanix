@@ -67,7 +67,8 @@ then (
     pkgs = pkgs;
     lib = pkgs.lib;
     config = machines."${create-image}";
-    format = "qcow2-compressed";
+    format = "qcow2";
+    postVM = "${pkgs.bzip2}/bin/bzip2 $diskImage";
     name = create-image;
   }
 ) else
