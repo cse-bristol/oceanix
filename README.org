@@ -13,41 +13,53 @@ $ nix-env -i -f .
 
 * Usage
 
-You need a network file, like this:
+You need a network file, which should look mostly like what nixops wants.
+
+The network file should have an attribute set in it containing a thing called ~network~, and then other things which are the machines.
 
 #+BEGIN_SRC nix
   {
     network = {
       name = "my network";
       defaults = {
-        region = "lon1";
-        ssh-key = "SOME PUBLIC KEY";
-        size = "c-8";
+         deployment.sshKey = "ssh-rsa AAA ...";
+         deployment.digitalOcean.region = "lon1";
       };
     };
 
-    machine1 = {
-      size = "c-32";
-      # inherits defaults
-      module = {config, pkgs, ...} : {
-        # etc etc
-      };
+    machine1 = {config, pkgs, ...} : {
+      deployment.digitalOcean.size = "c-32";
+      ...
+      services.nginx.enable = true;
     };
+
+    machine2 = ...;
   }
 #+END_SRC
 
-Things you can say about a machine or defaults are:
+Extra things you can put in machine config or default are:
 
-- size :: a digitalocean size slug
-- region :: a digitalocean region slug
-- ssh-key :: an ssh public key; this will be enabled for root ssh login on the machine, and also added to digitalocean's cloud-init setup.
-- image :: either the numeric ID of an image, or the *name* of an image. Not a slug, because custom iamges have no slugs.
-- copies :: an integer; if > 1, this machine will be replaced with machine-1 machine-2 ... machine-n.
-- host :: true/false, if true this machine's ip address will be baked into /etc/hosts on all the machines against its name. For copies > 1 the addresses of every copy will be baked in.
+- deployment.digitalOcean.size :: a digitalocean size slug
+- deployment.digitalOcean.region :: a digitalocean region slug
+- deployment.digitalOcean.image :: either the numeric ID of an image, or the *name* of an image. 
+  You can make an image using ~oceanix create-image~, but you have to upload it yourself.
+- deployment.sshKey :: an ssh public key; this will be enabled for root ssh login on the machine, and also added to digitalocean's cloud-init setup.
+- deployment.copies :: an integer; if > 1, this machine will be replaced with machine-1 machine-2 ... machine-n.
+- deployment.addHost :: true/false, if true this machine's ip address will be baked into /etc/hosts on all the machines against its name. For copies > 1 the addresses of every copy will be baked in.
+- deployment.keys :: A set of keys, like in nixops; you can write things like
 
-  This can only work after the machines are all provisioned, so if using this you either need to do provision, then deploy, or you need to deploy and deploy again.
+  #+BEGIN_SRC nix
+  deployment.keys.smtp = {
+    keyFile = /path/to/secret.key;
+    user = "root"; group = "root"; permissions = "0600";
+  };
 
-  The second is only safe if you don't have services that will die when they can't resolve another machine or whatever.
+  deployment.keys.fromPass.keyCommand = ["pass" "show" "secret-thing"];
+  #+END_SRC
+
+  These get copied into ~/run/keys~ on the machine. Unlike for nixops, you cannot put keys outside ~/run/keys~.
+
+  A bit like nixops there is a service you can depend on; it is called ~keys@keyname~ so you could say ~after = [ "keys@smtp.service" ];~ and ~wants = [ "keys@smtp.service" ];~ to wait for that key.
 
 You need to export ~DIGITALOCEAN_ACCESS_TOKEN~ to talk to the API.
 
@@ -62,16 +74,16 @@ This will produce a json file describing the network state.
 #+BEGIN_SRC sh
 $ oceanix plan network.nix network-tag
 ....
-
-| :size | :cpu |   :mem | :hourly1 | :monthly1 | :hourly | :monthly |
-|-------+------+--------+----------+-----------+---------+----------|
-|  c-32 |   96 | 196608 |  0.95238 |       640 |    2.86 |   1920.0 |
-
 Plan:
-CREATE+UPDATE m1 c-32
-CREATE+UPDATE m2 c-32
-CREATE+UPDATE m3 c-32
 
+CREATE+UPDATE m1-1 s-1vcpu-2gb
+CREATE+UPDATE m1-2 s-1vcpu-2gb
+
+Running cost:
+
+|       :size | :cpu | :mem | :hourly1 | :monthly1 | :hourly | :monthly |
+|-------------+------+------+----------+-----------+---------+----------|
+| s-1vcpu-2gb |    2 | 4096 |  0.01488 |        10 |    0.03 |     20.0 |
 #+END_SRC
 
 This will build the network and then tell you:
@@ -101,9 +113,9 @@ It can create you an image with
 $ oceanix create-image network.nix machine-name image-dir
 #+END_SRC
 
-The resulting image will be in ~image-dir/nixos.qcow2~.
+The resulting image will be in ~image-dir/nixos.qcow2.bz~.
 
-You can upload this image to digitalocean, and refer to it by name or ID in the network configuration. Although the image will have the cloud autoconfig thing baked into it, I don't know if that works, so make sure you have put in a nice old-fashioned ssh public key through ~network.defaults.ssh-key~ or ~machine-name-here.ssh-key~, so you can connect.
+You can upload this image to digitalocean, and refer to it by name or ID in the network configuration. Although the image will have the cloud autoconfig thing baked into it, I don't know if that works, so make sure you have put in a nice old-fashioned ssh public key through ~network.defaults.deployment.sshKey~ or ~machine-name-here.deployment.sshKey~, so you can connect.
 
 If you use a name, the first image with that name in the associated region will be selected.
 
@@ -111,16 +123,11 @@ You could use this to create a "blank" starting image with an empty config, or t
 
 * Limitations
 
-- If you change a machine's size or region, this is not aligned later
+- If you change a machine's size or region, this is not aligned later, or reported on.
+
   Management of regions in general is fairly poor.
-- If stuff goes wrong you don't get much help
 - Some default configuration is baked into ~digitalocean.nix~, which you can't replace right now.
 - The nix evaluation is done for every machine in the whole system in one go, which uses up a lot of memory if you have a lot of machines.
   
-  If you have a lot of identical machines you can say ~copies = N~ on them though.
-- If you are using hostnames and you do a straight deploy, you may need to deploy again to get the right IP addresses in /etc/hosts.
-
-  The build will warn you about this though.
-- +If you say ~deploy~ or ~provision~ or ~delete~ it will just do it without asking, which may cost a tonne of money, or destroy critical user data.+
+  If you have a lot of identical machines you can say ~deployment.copies = N~ on them though.
 - Host key checking is off, which is clearly not what anyone wants
-
