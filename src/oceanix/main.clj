@@ -201,16 +201,45 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
           (print-plan result {}))))))
 
 (defn create-image [args]
-  (let [[network-file machine-name image-file]
-        args]
+  (let [{:keys [arguments options errors summary]}
+        (parse-opts
+         args
+         [["-u" "--upload NAME" "Upload to digitalocean with NAME after creating image"]
+          ["-r" "--region REGION" "Region to upload to"]
+          [nil "--tag TAG" "A tag to add"]
+          [nil "--bucket BUCKET" "s3 bucket name for temporary storage"
+           :default "s3://image-transfer"]
+          
+          [nil "--spaces-region REGION" "spaces region for temporary storage"
+           :default "ams3"]
+          
+          [nil "--description TEXT" "Uploaded image description"]
+
+          ["-h" "--help"]])
+
+        [network-file machine-name image-file]
+        arguments
+        ]
     (cond
-      (not= 3 (count args))
-      (usage "usage: oceanix create-image <network.nix> <machine name> <image file name>")
+      (seq errors)
+      (usage "Errors:" errors "usage: oceanix create-image <network.nix> <machine name> <out-link>" summary)
+      
+      (:help options)
+      (usage "Help:" "usage: oceanix create-image <network.nix> <machine name> <out-link>" summary)
+      
+      (not= 3 (count arguments))
+      (usage "usage: oceanix create-image <network.nix> <machine name> <out-link>" summary)
 
       (not (.exists (io/file network-file)))
       (usage (str network-file " not found"))
       
       :else
-      (ops/create-image
-       network-file machine-name image-file))))
-
+      (let [output
+            (ops/create-image
+             network-file machine-name image-file)]
+        (if (:upload options)
+          (dc/create-image
+           (io/file output "nixos.qcow2.bz2")
+           (:upload options) options)
+          output)
+        ))))

@@ -175,7 +175,7 @@
     (let [system (:system source)
           host (str "root@" (dc/public-ip target))]
       (binding [proc/*sh-env* (merge
-                               (into {} (System/getenv))
+                               proc/our-env
                                {"NIX_SSHOPTS" "-T -oStrictHostKeyChecking=no"})]
         (sh! "nix-copy-closure" "--to" host "-s" system))
       (sh! "ssh" "-T" "-oStrictHostKeyChecking=no" host "nix-env" "--profile" system-profile "--set" system)
@@ -332,8 +332,9 @@
   )
 
 (defn create-image [network-file machine target]
-  (sh! "nix-build" network.nix
-       "--argstr" "network-file"
-       (.getCanonicalPath (io/file network-file))
-       "--argstr" "create-image" machine
-       "--out-link" target))
+  (string/trim
+   (sh! "nix-build" network.nix
+        "--argstr" "network-file"
+        (.getCanonicalPath (io/file network-file))
+        "--argstr" "create-image" machine
+        "--out-link" target)))

@@ -1,14 +1,12 @@
 (ns oceanix.doctl
   "Wrapper around the doctl command"
-  (:require [oceanix.proc :refer [sh*]]
+  (:require [oceanix.proc :refer [sh* sh! our-env]]
             [cheshire.core :as json]
-            [clojure.string :as string]))
+            [clojure.string :as string]
+            [clojure.java.io :as io]))
 
 (defn doctl* [args]
-  (when-not
-      (contains?
-       (System/getenv)
-       "DIGITALOCEAN_ACCESS_TOKEN")
+  (when-not (contains? our-env "DIGITALOCEAN_ACCESS_TOKEN")
     (throw (ex-info "No access token! You need to export DIGITALOCEAN_ACCESS_TOKEN for doctl to work" {})))
   
   (let [{:keys [exit out err] :as x}
@@ -109,3 +107,79 @@
                :when ip]
            [(:name droplet) ip])
          (into {}))))
+
+(defn s3cmd! [args
+              {:keys [access-key secret-key region]
+               :or
+               {access-key (our-env "DIGITALOCEAN_SPACES_ACCESS_KEY")
+                secret-key (our-env "DIGITALOCEAN_SPACES_SECRET_KEY")
+                region "ams3"}}]
+  (let [s3host (str region ".digitaloceanspaces.com")]
+    (:out
+     (sh* (concat
+           ["s3cmd"
+            "--access_key" access-key
+            "--secret_key" secret-key
+            "--host" s3host
+            "--host-bucket" (str "%(bucket)s." s3host)]
+           args)
+          {:out :string :err :tee :valid-exit-code #{0}
+           :hide-args {access-key (str "$DIGITALOCEAN_SPACES_ACCESS_KEY")
+                       secret-key (str "$DIGITALOCEAN_SPACES_SECRET_KEY")}
+           }))))
+
+(defn s3-create-bucket [bucket opts]
+  (let [existing-buckets
+        (-> (s3cmd! ["ls"] opts)
+            (string/split-lines)
+            (->> (map #(last (string/split % #" +"))))
+            (set))]
+    (when-not (contains? existing-buckets bucket)
+      (s3cmd! ["mb" bucket] opts))))
+
+(defn s3-upload-file
+  [file target opts]
+  (-> (s3cmd! ["put" file target "--acl-public"]
+              opts)
+      (string/split-lines)
+      (last)
+      (->> (re-find #"(https?://.+)"))
+      (last)))
+
+(defn create-image [file image-name
+                    {:keys [bucket description region tag]
+                     :or {bucket "s3://disk-images"}
+                     :as opts}]
+  
+  (let [target-name (str bucket "/" (str (java.util.UUID/randomUUID) "-" image-name ".qcow2.bz2"))
+        s3-opts (assoc opts :region (:spaces-region opts))
+        _       (s3-create-bucket bucket s3-opts)
+        s3-url (s3-upload-file
+                (.getCanonicalPath file)
+                target-name s3-opts)
+
+        image-id (-> (doctl*
+                      (cond->
+                          ["compute" "image" "create" image-name
+                           "--region" region
+                           "--image-url" s3-url
+                           "--image-distribution" "nixos"]
+                        (not (string/blank? description))
+                        (-> (conj "--image-description")
+                            (conj description))
+
+                        (not (string/blank? tag))
+                        (-> (conj "--tag-names") (conj tag))))
+                     (first)
+                     (:id))
+        ]
+    (loop []
+      (let [image-status
+            (-> (doctl "compute" "image" "get" image-id)
+                (first)
+                (:status))]
+        (when-not (= "available" status)
+          (println "Waiting for image..." status)
+          (Thread/sleep 5)
+          (recur))))
+    (s3cmd! ["rm" target-name] s3-opts)))

@@ -37,6 +37,8 @@
 (def ^:dynamic *sh-env* {})
 (def ^:dynamic *identifier* nil)
 
+(def our-env (into {} (System/getenv)))
+
 (defn colour [string]
   (let [id (swap! colr-id inc)]
     (str (nth colors (mod id (count colors))) string RESET)))
@@ -46,9 +48,13 @@
         id      (swap! proc-id inc)
         idstr   (or (and *identifier* (str *identifier* " " id))
                     (colour (str id)))
-        id      (str idstr " " BOLD cmd RESET)]
+        id      (str idstr " " BOLD cmd RESET)
+        hide-arg (if-let [h (:hide-args opts)]
+                   (fn [a] (or (h a) a))
+                   identity)
+        ]
     (locking out-lock
-      (println id (string/join " " (rest args))))
+      (println id (string/join " " (map hide-arg (rest args)))))
     (let [tee-out (= :tee (:out opts))
           tee-err (= :tee (:err opts))
 
