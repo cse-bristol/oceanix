@@ -6,6 +6,7 @@
 , doctl ? pkgs.doctl
 , openssh ? pkgs.openssh
 , nix ? pkgs.nix
+, s3cmd ? pkgs.s3cmd
 } :
 stdenv.mkDerivation rec {
   name = "oceanix";
@@ -19,6 +20,7 @@ stdenv.mkDerivation rec {
       --prefix PATH : ${babashka}/bin \
       --prefix PATH : ${doctl}/bin \
       --prefix PATH : ${openssh}/bin \
-      --prefix PATH : ${nix}/bin
+      --prefix PATH : ${nix}/bin \
+      --prefix PATH : ${s3cmd}/bin \
   '';
 }
