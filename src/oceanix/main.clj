@@ -67,11 +67,11 @@
          :validate [pos? "Must have a positive number of threads"]]
 
         upload-options
-        [["-r" "--region" "What region to create the image in"
+        [["-r" "--region R" "What region to create the image in"
           :default "lon1"]
-         [nil "--spaces-region" "Uploads go via DO spaces in this region"
-          :default "ams2"]
-         [nil "--spaces-bucket" "Uploads go via DO spaces in this bucket"]]
+         [nil "--spaces-region R" "Uploads go via DO spaces in this region"
+          :default "ams3"]
+         [nil "--spaces-bucket B" "Uploads go via DO spaces in this bucket"]]
         ]
     
     {:build
