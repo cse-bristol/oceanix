@@ -147,13 +147,13 @@
       (last)))
 
 (defn create-image [file image-name
-                    {:keys [bucket description region tag]
-                     :or {bucket "s3://disk-images"}
+                    {:keys [spaces-bucket description region tag]
+                     :or {spaces-bucket "s3://disk-images"}
                      :as opts}]
   
-  (let [target-name (str bucket "/" (str (java.util.UUID/randomUUID) "-" image-name ".qcow2.bz2"))
+  (let [target-name (str spaces-bucket "/" (str (java.util.UUID/randomUUID) "-" image-name ".qcow2.bz2"))
         s3-opts (assoc opts :region (:spaces-region opts))
-        _       (s3-create-bucket bucket s3-opts)
+        _       (s3-create-bucket spaces-bucket s3-opts)
         s3-url (s3-upload-file
                 (.getCanonicalPath file)
                 target-name s3-opts)
@@ -174,12 +174,12 @@
                      (:id))
         ]
     (loop []
-      (let [image-status
+      (let [status
             (-> (doctl "compute" "image" "get" image-id)
                 (first)
                 (:status))]
         (when-not (= "available" status)
-          (println "Waiting for image..." status)
-          (Thread/sleep 5)
+          (println "Waiting for image [10s]..." status)
+          (Thread/sleep 10000)
           (recur))))
     (s3cmd! ["rm" target-name] s3-opts)))

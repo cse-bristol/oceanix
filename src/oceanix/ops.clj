@@ -29,7 +29,11 @@
   Rather than solving this properly, we just rerun the build / deploy
   until this is stable.
   "
-  [network-file tag-hosts]
+  [network-file tag-hosts & {:keys [outputs]
+                             :or {outputs
+                                  ["sshKey" "copies" "addHost" "keys"
+                                   "region" "size" "image"
+                                   "system"]}}]
   (let [tag-hosts (json/generate-string (or tag-hosts {}))
 
         json (-> (io/file network-file)
@@ -37,6 +41,7 @@
                  (->> (sh! "nix-build"
                            network.nix
                            "--argstr" "hosts" tag-hosts
+                           "--argstr" "outputs" (json/generate-string outputs)
                            "--argstr" "network-file"))
                  (string/trim)
                  (slurp)
@@ -328,13 +333,25 @@
     (when-not (:only-provision o)
       (print ACTIVATE (:name target) (dc/public-ip target))
       (outcome a)
-      ))
-  )
+      )))
 
-(defn create-image [network-file machine target]
-  (string/trim
-   (sh! "nix-build" network.nix
-        "--argstr" "network-file"
-        (.getCanonicalPath (io/file network-file))
-        "--argstr" "create-image" machine
-        "--out-link" target)))
+(defn create-network-images [network-file hosts]
+  (let [result
+        (build
+         network-file hosts
+         :outputs ["image" "outImage"])]
+    (for [output (vals result)]
+      [(:image output) (:outImage output)])))
+
+(defn create-base-image [ssh-key]
+  (-> (sh! "nix-build" network.nix
+            "--argstr" "network-file"
+            (support-file "nix/base-image.nix")
+            "--argstr" "outputs" "[\"outImage\"]"
+            "--argstr" "sshKey" ssh-key
+            "--no-out-link")
+      (string/trim)
+      (slurp)
+      (json/parse-string true)
+      (:base-image)
+      (:outImage)))

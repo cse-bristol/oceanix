@@ -4,29 +4,28 @@
 # 2. to build disk images to upload to digitalocean as starting points
 {
   network-file,                     # this is the path to the network file
-  create-image ? null,              #  if set, name of a machine in the
-                                    #  network; causes output to be a
-                                    #  disk image rather than a network
-                                    #  file
+  outputs ? "[]",                     # keys to select in the outputs
   pkgs ? (import <nixpkgs> {}),     # the nixpkgs to use
-  hosts ? "{}"                      # map from existing hostname to ip
+  hosts ? "{}",                     # map from existing hostname to ip
                                     #  address, used to construct hosts
                                     #  file
+  sshKey ? null                                    
 }:
 let
   lib = pkgs.lib;
-  
+  outFields = builtins.fromJSON outputs; 
+
   selectAttrs = set : list : # selectAttrs {x = 1; y = 2;} ["x"] => {x = 1;}
-  builtins.intersectAttrs
-  (builtins.listToAttrs (map (x:{name=x; value=true;}) list))
-  set;
+    builtins.intersectAttrs
+    (builtins.listToAttrs (map (x:{name=x; value=true;}) list))
+    set;
 
   # A function you call like evalConfig {modules = [...]}; and you get
   # back a nixos system.
   evalConfig = import "${pkgs.path}/nixos/lib/eval-config.nix";
   
   network = import network-file;
-  defaultConfig = network.network.defaults or ({...}:{});
+  defaultConfig = network.network.defaults or ({...}:{deployment.sshKey = lib.mkDefault sshKey;});
 
   machines = # evaluate machines
     builtins.mapAttrs
@@ -40,7 +39,7 @@ let
       ];
     }).config)
     (builtins.removeAttrs network ["network"]);
-
+    
   # cook up hosts file, by looking in the hosts argument for all machines where host = true
   extraHosts =
     let
@@ -57,30 +56,30 @@ let
          else builtins.genList (n : hostLine "${host}-${toString (n+1)}") copies
       ) hostMachines;
     in builtins.concatStringsSep "\n" hostLines;
+
+    buildImage = name: config: (import "${pkgs.path}/nixos/lib/make-disk-image.nix") {
+      pkgs = pkgs;
+      lib = pkgs.lib;
+      config = config;
+      format = "qcow2";
+      postVM = "${pkgs.bzip2}/bin/bzip2 $diskImage";
+      name = name;
+    };
+
+    outputConfig = name: config: (
+      (selectAttrs config.deployment ["sshKey" "copies" "addHost" "keys"]) //
+      (selectAttrs config.deployment.digitalOcean ["region" "size" "image"]) //
+      {system   = config.system.build.toplevel; outImage = buildImage name config;
+    });
 in
-
-# and now the actual action
-
-if create-image != null
-then (
-  (import "${pkgs.path}/nixos/lib/make-disk-image.nix") {
-    pkgs = pkgs;
-    lib = pkgs.lib;
-    config = machines."${create-image}";
-    format = "qcow2";
-    postVM = "${pkgs.bzip2}/bin/bzip2 $diskImage";
-    name = create-image;
-  }
-) else
 pkgs.writeTextFile
 {
   name = "${network.network.name}.json";
   text = builtins.toJSON (
     builtins.mapAttrs
-    (name: config:
-        (selectAttrs config.deployment ["sshKey" "copies" "addHost" "keys"]) //
-        (selectAttrs config.deployment.digitalOcean ["region" "size" "image"]) //
-        {system = config.system.build.toplevel;})
+
+    (name: config: selectAttrs (outputConfig name config) outFields)
+    
     machines
   );
 }

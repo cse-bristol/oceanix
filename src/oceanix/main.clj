@@ -1,7 +1,7 @@
 (ns oceanix.main
   (:require [oceanix.ops :as ops]
             [oceanix.doctl :as dc]
-            [oceanix.proc :as proc]
+            [oceanix.proc :as proc :refer [our-env]]
             [clojure.tools.cli :refer [parse-opts]]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]
@@ -9,63 +9,149 @@
 
             [clojure.set :as set]))
 
-(declare build deploy destroy create-image)
+(declare deploy destroy create-images create-base-image)
 
-(defn usage [& msg]
-  (binding [*out* *err*]
-    (println (string/join "\n" msg))
-    (System/exit 1)))
+(defn exit [status & lines]
+  (doseq [l lines]
+    (println l))
+  (System/exit status))
 
-(defn real-main [args]
-  (let [[c & args] args]
-    (case c
-      "build"
-      (build args)
+(defn or-env [opts key]
+  (or (get opts key)
+      (let [env-var (str "DEPLOY_"
+                         (-> (name key)
+                             (string/upper-case)
+                             (string/replace "-" "_")))]
+        (or (get our-env env-var)
+            (exit 1 (str "--" (name key) " is required (or set " env-var ")"))))))
 
-      "provision"
-      (deploy args :only-provision true)
+(declare commands)
+
+(defn main [[command-name & arguments]]
+  (let [command (get commands (keyword command-name))]
+    (if command
+      (let [{:keys [options arguments errors summary]}
+            (parse-opts arguments
+                        (conj (:opts command) ["-h" "--help"]))]
+        (if (or (:help options) (seq errors))
+          (apply
+           exit (if (:help options) 0 1)
+           (str "usage: oceanix " command-name " [options]")
+           (:help command)
+           summary errors)
+          ((:run command) options arguments)))
+      (exit 1 (str "usage: oceanix "
+                   (string/join " | " (sort (map name (keys commands))))
+                   " [options]\n"
+
+                   (string/join
+                    "\n"
+                    (for [[k v] (sort-by first commands)]
+                      (str "\t" (name k) ": " (:help v))))
+                   )))))
+
+(def commands
+  (let [network-file
+        ["-n" "--network FILE" "A nix file defining a network"
+         :validate [#(.exists (io/file %)) "Network file not found"]]
+
+        tag
+        ["-t" "--tag TAG" "A tag, used on digitalocean to identify a deployment"]
+
+        force
+        ["-f" "--force" "Make changes to digitalocean without asking for confirmation"]
+
+        threads
+        [nil "--threads N" "How many machines to deploy in parallel"
+         :default 4 :parse-fn #(Integer/parseInt %)
+         :vaildate [pos? "Must have a positive number of threads"]]
+
+        upload-options
+        [["-r" "--region" "What region to create the image in"
+          :default "lon1"]
+         [nil "--spaces-region" "Uploads go via DO spaces in this region"
+          :default "ams2"]
+         [nil "--spaces-bucket" "Uploads go via DO spaces in this bucket"]]
+        ]
+    
+    {:build
+     {:help "Build the system roots for a deployment"
+      :opts [network-file tag]
       
-      "deploy"
-      (deploy args)
+      :run
+      (fn [{:keys [tag] :as opts} _]
+        (let [network (or-env opts :network)
+              tag     (or tag (our-env "DEPLOY_TAG"))]
+          (ops/build network (if tag (dc/tag-hosts tag) {}))))
+      }
 
-      "plan"
-      (deploy args :dry-run true)
-
-      "destroy"
-      (destroy args)
-
-      "create-image"
-      (create-image args)
-
-      (usage "usage: oceanix [--print-stack-trace] build | provision | plan | deploy | destroy | create-image"))))
-
-(defn main [args]
-  (let [[pst args] (if (= (first args) "--print-stack-trace")
-                     [true (rest args)]
-                     [false args])]
-    (if pst
-      (real-main args)
-      (try
-        (real-main args)
-        (catch Exception e
-          (println "Exception: " (ex-message e))
-          (doseq [[k v] (ex-data e)]
-            (println k v))
-          (println "   oceanix --print-stack-trace ... to get cause"))))))
-
-(defn build [args]
-  (cond
-    (< (count args) 1)
-    (usage "usage: oceanix build <network.nix> [<tag-name>]
-Note that omitting <tag-name> will mean a rebuild if you have names in the hosts file")
-
-    (not (.exists (io/file (first args))))
-    (usage (str (first args) " not found"))
-
-    :else
-    (do (ops/build (first args)
-                   (dc/tag-hosts (second args)))
-        nil)))
+     :provision
+     {:help "Create / destroy machines for a deployment"
+      :opts [network-file tag force threads]
+      :run
+      (fn [opts _]
+        (let [network (or-env opts :network)
+              tag     (or-env opts :tag)]
+          (deploy network tag (assoc opts :only-provision true))))}
+     
+     :deploy
+     {:help "Provision and then deploy a network"
+      :opts [network-file tag force threads]
+      :run
+      (fn [opts _]
+        (let [network (or-env opts :network)
+              tag     (or-env opts :tag)]
+          (deploy network tag (assoc opts :only-provision false))))}
+     
+     :destroy
+     {:help "Destroy all the machines in a tag"
+      :opts [tag]
+      :run
+      (fn [{:keys [tag]} _]
+        (or tag (exit 1 "--tag is required"))
+        (destroy tag))
+      }
+     
+     :image
+     {:help "Create images for machines in a network"
+      :opts (into [network-file
+                   ["-u" "--upload" "Whether to upload the images"]]
+                  upload-options)
+      :run
+      (fn [{:keys [upload tag] :as opts} _]
+        (let [network       (or-env opts :network)
+              tag           (or tag (our-env "DEPLOY_TAG"))
+              region        (and upload (or-env opts :region))
+              spaces-region (and upload (or-env opts :spaces-region))
+              spaces-bucket (and upload (or-env opts :spaces-bucket))]
+          (create-images
+           network tag
+           (assoc opts
+                  :region region
+                  :spaces-region spaces-region
+                  :spaces-bucket spaces-bucket))))
+      }
+     
+     :base-image
+     {:help "Create a base nixos image with nothing in it"
+      :opts (into [["-k" "--ssh-key PUBKEY" "A public key"]
+                   ["-u" "--upload NAME" "What name to upload the image as"]]
+                  upload-options)
+      :run
+      (fn [{:keys [upload] :as opts} _]
+        (let [ssh-key       (or-env opts :ssh-key)
+              region        (and upload (or-env opts :region))
+              spaces-region (and upload (or-env opts :spaces-region))
+              spaces-bucket (and upload (or-env opts :spaces-bucket))]
+          (create-base-image
+           (assoc opts
+                  :ssh-key ssh-key
+                  :region region
+                  :spaces-region spaces-region
+                  :spaces-bucket spaces-bucket
+                  :upload upload))
+          
+          ))}}))
 
 (defn print-plan [plan opts]
   (doseq [a plan]
@@ -118,128 +204,78 @@ Note that omitting <tag-name> will mean a rebuild if you have names in the hosts
   (flush)
   (= (read-line) response))
 
-(defn deploy [args & {:keys [dry-run] :as opts}]
-  (let [{:keys [options arguments errors summary]}
-        (parse-opts
-         args
-         [[nil "--threads N" "How many operations to do in parallel"
-           :default 4 :parse-fn #(Integer/parseInt %)]
-          [nil "--force" "Whether to ask or just go ahead and do it"]
-          ["-h" "--help"]])
-        opts (merge opts options)
-        args arguments
-
-        {:keys [only-provision force]} opts
+(defn deploy [network-file tag & {:keys [only-provision dry-run force] :as opts}]
+  (let [existing-machines (dc/tag-hosts tag)
+        build-out      (ops/build network-file existing-machines)
+        plan           (ops/plan build-out tag)
+        price-table    (print-price build-out)
         ]
-    (cond
-      (or (:help opts) (not= 2 (count args)) (seq errors))
-      (usage (string/join "\n" errors)
-             "usage: oceanix <provision | plan | deploy> [flags] <network.nix> <target-tag>"
-             summary)
-      
-      (not (.exists (io/file (first args))))
-      (usage (str (first args) " not found"))
 
-      :else
-      (let [[network-file tag] args
-            existing-machines (dc/tag-hosts tag)
-            build-out      (ops/build network-file existing-machines)
-            plan           (ops/plan build-out tag)
-            price-table    (print-price build-out)
+    (println)
+    (println "Plan:")
+    (println)
+    (print-plan plan opts)
+    (println)
+
+    (println "Running cost:")
+    (println price-table)
+    
+    (when (and (not dry-run)
+               (not (some (comp #{:error} :outcome) plan))
+               (or force (confirm?)))
+      (let [host-machines    (keep (fn [[k v]] (when (:addHost v) k)) build-out)
+            missing-machines (set/difference (set host-machines)
+                                             (set (keys existing-machines)))
+
+            [plan partial-result build-out]
+            (if (or (empty? missing-machines) only-provision)
+              [plan [] build-out]
+              (do
+                (println "Provisioning before rebuild due to missing machines in hosts files")
+                (let [result (ops/realize-plan plan (assoc opts :only-provision true))
+                      new-machines (dc/tag-hosts tag)
+                      new-build (ops/build network-file new-machines)
+                      new-plan  (ops/plan new-build tag)]
+                  (println "Provisioning result:")
+                  (print-plan result opts)
+
+                  [new-plan result new-build])))
+            
+            extra-result (ops/realize-plan plan opts)
+            whole-result (concat partial-result extra-result)
             ]
+        (print-plan whole-result opts)
+        ))
+    ))
 
-        (println)
-        (println "Plan:")
-        (println)
-        (print-plan plan opts)
-        (println)
+(defn destroy [tag]
+  (let [machines (dc/droplet-list :tag-name tag)
+        plan     (for [machine machines]
+                   {:action :delete :target machine
+                    :colour-name (proc/colour (:name machine))})]
+    (print-plan plan {})
+    (when (and (not-empty plan) (confirm?))
+      (let [result (ops/realize-plan plan {})]
+        (print-plan result {})))))
 
-        (println "Running cost:")
-        (println price-table)
-        
-        (when (and (not dry-run)
-                   (not (some (comp #{:error} :outcome) plan))
-                   (or force (confirm?)))
-          (let [host-machines    (keep (fn [[k v]] (when (:addHost v) k)) build-out)
-                missing-machines (set/difference (set host-machines)
-                                                 (set (keys existing-machines)))
-
-                [plan partial-result build-out]
-                (if (or (empty? missing-machines) only-provision)
-                  [plan [] build-out]
-                  (do
-                    (println "Provisioning before rebuild due to missing machines in hosts files")
-                    (let [result (ops/realize-plan plan (assoc opts :only-provision true))
-                          new-machines (dc/tag-hosts tag)
-                          new-build (ops/build network-file new-machines)
-                          new-plan  (ops/plan new-build tag)]
-                      (println "Provisioning result:")
-                      (print-plan result opts)
-
-                      [new-plan result new-build])))
-                
-                extra-result (ops/realize-plan plan opts)
-                whole-result (concat partial-result extra-result)
-                ]
-            (print-plan whole-result opts)
-            ))
-        ))))
-
-(defn destroy [args]
-  (cond
-    (not= 1 (count args))
-    (usage "usage: oceanix destroy <target-tag>")
-
-    :else
-    (let [machines (dc/droplet-list :tag-name (first args))
-          plan     (for [machine machines]
-                     {:action :delete :target machine
-                      :colour-name (proc/colour (:name machine))})]
-      (print-plan plan {})
-      (when (and (not-empty plan) (confirm?))
-        (let [result (ops/realize-plan plan {})]
-          (print-plan result {}))))))
-
-(defn create-image [args]
-  (let [{:keys [arguments options errors summary]}
-        (parse-opts
-         args
-         [["-u" "--upload NAME" "Upload to digitalocean with NAME after creating image"]
-          ["-r" "--region REGION" "Region to upload to"]
-          [nil "--tag TAG" "A tag to add"]
-          [nil "--bucket BUCKET" "s3 bucket name for temporary storage"
-           :default "s3://image-transfer"]
-          
-          [nil "--spaces-region REGION" "spaces region for temporary storage"
-           :default "ams3"]
-          
-          [nil "--description TEXT" "Uploaded image description"]
-
-          ["-h" "--help"]])
-
-        [network-file machine-name image-file]
-        arguments
-        ]
-    (cond
-      (seq errors)
-      (usage "Errors:" errors "usage: oceanix create-image <network.nix> <machine name> <out-link>" summary)
+(defn create-base-image [{:keys [ssh-key upload] :as options}]
+  (let [image (ops/create-base-image ssh-key)]
+    (if upload
+      (dc/create-image
+       (io/file upload "nixos.qcow.bz2")
+       upload
+       options)
       
-      (:help options)
-      (usage "Help:" "usage: oceanix create-image <network.nix> <machine name> <out-link>" summary)
-      
-      (not= 3 (count arguments))
-      (usage "usage: oceanix create-image <network.nix> <machine name> <out-link>" summary)
+      (println image))))
 
-      (not (.exists (io/file network-file)))
-      (usage (str network-file " not found"))
-      
-      :else
-      (let [output
-            (ops/create-image
-             network-file machine-name image-file)]
-        (if (:upload options)
-          (dc/create-image
-           (io/file output "nixos.qcow2.bz2")
-           (:upload options) options)
-          output)
-        ))))
+(defn create-images [network tag {:keys [upload] :as options}]
+  (let [tag-hosts (if tag (dc/tag-hosts tag) {})
+        images (ops/create-network-images network tag-hosts)]
+    (if upload
+      (doseq [[image-name image-path] images]
+        (dc/create-image
+         (io/file image-path "nixos.qcow.bz2")
+         image-name
+         options))
+      (doseq [[image-name path] images]
+        (println image-name path)))))
