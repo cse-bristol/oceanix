@@ -151,7 +151,11 @@
                      :or {spaces-bucket "s3://disk-images"}
                      :as opts}]
   
-  (let [target-name (str spaces-bucket "/" (str (java.util.UUID/randomUUID) "-" image-name ".qcow2.bz2"))
+  (let [spaces-bucket (if (.startsWith spaces-bucket "s3://")
+                        spaces-bucket
+                        (str "s3://" spaces-bucket))
+
+        target-name (str spaces-bucket "/" (str (java.util.UUID/randomUUID) "-" image-name ".qcow2.bz2"))
         s3-opts (assoc opts :region (:spaces-region opts))
         _       (s3-create-bucket spaces-bucket s3-opts)
         s3-url (s3-upload-file
