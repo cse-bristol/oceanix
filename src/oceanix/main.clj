@@ -64,7 +64,7 @@
         threads
         [nil "--threads N" "How many machines to deploy in parallel"
          :default 4 :parse-fn #(Integer/parseInt %)
-         :vaildate [pos? "Must have a positive number of threads"]]
+         :validate [pos? "Must have a positive number of threads"]]
 
         upload-options
         [["-r" "--region" "What region to create the image in"
@@ -204,7 +204,7 @@
   (flush)
   (= (read-line) response))
 
-(defn deploy [network-file tag & {:keys [only-provision dry-run force] :as opts}]
+(defn deploy [network-file tag {:keys [only-provision dry-run force] :as opts}]
   (let [existing-machines (dc/tag-hosts tag)
         build-out      (ops/build network-file existing-machines)
         plan           (ops/plan build-out tag)
