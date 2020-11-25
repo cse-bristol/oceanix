@@ -66,13 +66,13 @@ You need to export ~DIGITALOCEAN_ACCESS_TOKEN~ to talk to the API.
 Commands you can do are then:
 
 #+BEGIN_SRC sh
-$ oceanix build network.nix
+$ oceanix build -n network.nix
 #+END_SRC
 
 This will produce a json file describing the network state.
 
 #+BEGIN_SRC sh
-$ oceanix plan network.nix network-tag
+$ oceanix plan -n network.nix -t network-tag
 ....
 Plan:
 
@@ -92,13 +92,13 @@ This will build the network and then tell you:
 - What operations are needed to realize the plan
 
 #+BEGIN_SRC sh
-$ oceanix provision network.nix network-tag
+$ oceanix provision -n network.nix -t network-tag
 #+END_SRC
 
 This will build the network and create/destroy appropriate machines, but not do any deployment.
 
 #+BEGIN_SRC sh
-$ oceanix deploy network.nix network-tag
+$ oceanix deploy -n network.nix -t network-tag
 #+END_SRC
 
 This will build, provision, and then deploy all the machines in the network.
@@ -110,16 +110,20 @@ oceanix depends on having a nixos image to start from (unlike nixops, which uses
 It can create you an image with
 
 #+BEGIN_SRC sh
-$ oceanix create-image network.nix machine-name image-dir
+$ oceanix base-image -k "SOME SSH KEY" -u base-image --spaces-bucket my-images
 #+END_SRC
 
-The resulting image will be in ~image-dir/nixos.qcow2.bz~.
+This will upload the image to lon1 under the name base-image, by transferring it via an S3 bucket called my-images in ams3.
 
-You can upload this image to digitalocean, and refer to it by name or ID in the network configuration. Although the image will have the cloud autoconfig thing baked into it, I don't know if that works, so make sure you have put in a nice old-fashioned ssh public key through ~network.defaults.deployment.sshKey~ or ~machine-name-here.deployment.sshKey~, so you can connect.
+* Environment
 
-If you use a name, the first image with that name in the associated region will be selected.
+- You must set:
+  - ~DIGITALOCEAN_ACCESS_TOKEN~ to do anything involving digitalocean
+  - ~DIGITALOCEAN_SPACES_ACCESS_KEY~ and ~DIGITALOCEAN_SPACES_SECRET_KEY~ to upload images.
+- You can set:
+  - ~DEPLOY_NETWORK~, ~DEPLOY_REGION~, ~DEPLOY_TAG~, ~DEPLOY_SPACES_REGION~, ~DEPLOY_SPACES_BUCKET~
 
-You could use this to create a "blank" starting image with an empty config, or to create populated starting images which have any heavy dependencies you need.
+    These will stand in for arguments like ~--network~, ~--tag~ etc.
 
 * Limitations
 
