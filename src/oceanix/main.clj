@@ -262,7 +262,7 @@
   (let [image (ops/create-base-image ssh-key)]
     (if upload
       (dc/create-image
-       (io/file image "nixos.qcow.bz2")
+       (io/file image "nixos.qcow2.bz2")
        upload
        options)
       
@@ -274,7 +274,7 @@
     (if upload
       (doseq [[image-name image-path] images]
         (dc/create-image
-         (io/file image-path "nixos.qcow.bz2")
+         (io/file image-path "nixos.qcow2.bz2")
          image-name
          options))
       (doseq [[image-name path] images]
