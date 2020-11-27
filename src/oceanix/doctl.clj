@@ -187,3 +187,28 @@
           (Thread/sleep 10000)
           (recur))))
     (s3cmd! ["rm" target-name] s3-opts)))
+
+(defn find-or-create-project
+  "Get project ID from project name. If you have multiple projects with
+  same name, gets the min ID."
+  [name]
+  (-> (->> (doctl "projects" "list")
+           (filter (comp #{name} :name))
+           (sort-by :id)
+           (first)
+           (:id))
+      (or (-> (doctl "projects" "create"
+                  "--name" name
+                  "--purpose" "Created by a deployment")
+              (first)
+              (:id)))))
+
+(defn assign-to-project [name & {:keys [droplet-ids]}]
+  (let [project-id (find-or-create-project name)]
+    (doctl*
+     (into ["projects" "resources" "assign" project-id]
+           (for [droplet droplet-ids]
+             (str "--resource=do:droplet:" droplet))))))
+
+
+

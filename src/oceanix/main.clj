@@ -42,7 +42,7 @@
           ((:run command) options arguments)))
       (exit 1 (str "usage: oceanix "
                    (string/join " | " (sort (map name (keys commands))))
-                   " [options]\n"
+                   " [options | --help]\n"
 
                    (string/join
                     "\n"
@@ -61,6 +61,9 @@
         force
         ["-f" "--force" "Make changes to digitalocean without asking for confirmation"]
 
+        project
+        ["-p" "--project NAME" "A digitalocean project to put things into"]
+        
         threads
         [nil "--threads N" "How many machines to deploy in parallel"
          :default 4 :parse-fn #(Integer/parseInt %)
@@ -87,7 +90,7 @@
 
      :provision
      {:help "Create / destroy machines for a deployment"
-      :opts [network-file tag force threads]
+      :opts [network-file tag force threads project]
       :run
       (fn [opts _]
         (let [network (or-env opts :network)
@@ -96,7 +99,7 @@
      
      :deploy
      {:help "Provision and then deploy a network"
-      :opts [network-file tag force threads]
+      :opts [network-file tag force threads project]
       :run
       (fn [opts _]
         (let [network (or-env opts :network)
@@ -204,7 +207,7 @@
   (flush)
   (= (read-line) response))
 
-(defn deploy [network-file tag {:keys [only-provision dry-run force] :as opts}]
+(defn deploy [network-file tag {:keys [project only-provision dry-run force] :as opts}]
   (let [existing-machines (dc/tag-hosts tag)
         build-out      (ops/build network-file existing-machines)
         plan           (ops/plan build-out tag)
@@ -245,8 +248,14 @@
             whole-result (concat partial-result extra-result)
             ]
         (print-plan whole-result opts)
-        ))
-    ))
+
+        (let [project (:project opts)]
+          (when-not (string/blank? project)
+            (let [droplets (dc/droplet-list :tag-name tag)]
+              (dc/assign-to-project
+               project
+               :droplet-ids (map :id droplets)))
+            ))))))
 
 (defn destroy [tag]
   (let [machines (dc/droplet-list :tag-name tag)
