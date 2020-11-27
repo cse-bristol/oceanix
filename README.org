@@ -13,6 +13,18 @@ $ nix-env -i -f .
 
 * Usage
 
+** Environment
+
+- You must set:
+  - ~DIGITALOCEAN_ACCESS_TOKEN~ to do anything involving digitalocean
+  - ~DIGITALOCEAN_SPACES_ACCESS_KEY~ and ~DIGITALOCEAN_SPACES_SECRET_KEY~ to upload images.
+- You can set:
+  - ~DEPLOY_NETWORK~, ~DEPLOY_REGION~, ~DEPLOY_TAG~, ~DEPLOY_SPACES_REGION~, ~DEPLOY_SPACES_BUCKET~
+
+    These will stand in for arguments like ~--network~, ~--tag~ etc.
+
+** Network definition
+
 You need a network file, which should look mostly like what nixops wants.
 
 The network file should have an attribute set in it containing a thing called ~network~, and then other things which are the machines.
@@ -42,7 +54,7 @@ Extra things you can put in machine config or default are:
 - deployment.digitalOcean.size :: a digitalocean size slug
 - deployment.digitalOcean.region :: a digitalocean region slug
 - deployment.digitalOcean.image :: either the numeric ID of an image, or the *name* of an image. 
-  You can make an image using ~oceanix create-image~, but you have to upload it yourself.
+  You can make an image using ~oceanix image~ or ~oceanix base-image~.
 - deployment.sshKey :: an ssh public key; this will be enabled for root ssh login on the machine, and also added to digitalocean's cloud-init setup.
 - deployment.copies :: an integer; if > 1, this machine will be replaced with machine-1 machine-2 ... machine-n.
 - deployment.addHost :: true/false, if true this machine's ip address will be baked into /etc/hosts on all the machines against its name. For copies > 1 the addresses of every copy will be baked in.
@@ -61,69 +73,43 @@ Extra things you can put in machine config or default are:
 
   A bit like nixops there is a service you can depend on; it is called ~keys@keyname~ so you could say ~after = [ "keys@smtp.service" ];~ and ~wants = [ "keys@smtp.service" ];~ to wait for that key.
 
-You need to export ~DIGITALOCEAN_ACCESS_TOKEN~ to talk to the API.
-
-Commands you can do are then:
-
-#+BEGIN_SRC sh
-$ oceanix build -n network.nix
-#+END_SRC
-
-This will produce a json file describing the network state.
-
-#+BEGIN_SRC sh
-$ oceanix plan -n network.nix -t network-tag
-....
-Plan:
-
-CREATE+UPDATE m1-1 s-1vcpu-2gb
-CREATE+UPDATE m1-2 s-1vcpu-2gb
-
-Running cost:
-
-|       :size | :cpu | :mem | :hourly1 | :monthly1 | :hourly | :monthly |
-|-------------+------+------+----------+-----------+---------+----------|
-| s-1vcpu-2gb |    2 | 4096 |  0.01488 |        10 |    0.03 |     20.0 |
-#+END_SRC
-
-This will build the network and then tell you:
-
-- What it will cost when running and what resources it has
-- What operations are needed to realize the plan
-
-#+BEGIN_SRC sh
-$ oceanix provision -n network.nix -t network-tag
-#+END_SRC
-
-This will build the network and create/destroy appropriate machines, but not do any deployment.
-
-#+BEGIN_SRC sh
-$ oceanix deploy -n network.nix -t network-tag
-#+END_SRC
-
-This will build, provision, and then deploy all the machines in the network.
-
-* Disk images
+** Creating a base image
 
 oceanix depends on having a nixos image to start from (unlike nixops, which uses a fearsome script to brain-wipe an existing install).
 
 It can create you an image with
 
 #+BEGIN_SRC sh
-$ oceanix base-image -k "SOME SSH KEY" -u base-image --spaces-bucket my-images
+$ oceanix base-image -k "SOME SSH PUBLIC KEY" -u base-image --spaces-bucket my-images
 #+END_SRC
 
 This will upload the image to lon1 under the name base-image, by transferring it via an S3 bucket called my-images in ams3.
 
-* Environment
+Alternatively you can create images for a specific deployment with 
 
-- You must set:
-  - ~DIGITALOCEAN_ACCESS_TOKEN~ to do anything involving digitalocean
-  - ~DIGITALOCEAN_SPACES_ACCESS_KEY~ and ~DIGITALOCEAN_SPACES_SECRET_KEY~ to upload images.
-- You can set:
-  - ~DEPLOY_NETWORK~, ~DEPLOY_REGION~, ~DEPLOY_TAG~, ~DEPLOY_SPACES_REGION~, ~DEPLOY_SPACES_BUCKET~
+#+BEGIN_SRC sh
+$ oceanix image -n network.nix -u --spaces-bucket my-images
+#+END_SRC
 
-    These will stand in for arguments like ~--network~, ~--tag~ etc.
+This will create images for each machine and upload them under the name given in ~deployment.digitalOcean.image~.
+
+** Deploying a network
+
+Deployments to go a digitalocean tag; if you run
+
+#+BEGIN_SRC sh
+$ oceanix deploy -n network.nix -t deployment-tag
+#+END_SRC
+
+this will
+
+1. List the machines on digitalocean tagged with ~deployment-tag~
+2. List the machines defined in ~network.nix~
+3. Create / destroy droplets so that there is exactly one droplet with ~deployment-tag~ for each machine in ~network.nix~, whose name will be the name used in ~network.nix~
+
+   This stage is where ~oceanix provision~ stops.
+4. Build system root for these machines
+5. Deploy system root to the machines
 
 * Limitations
 
