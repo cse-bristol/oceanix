@@ -4,7 +4,8 @@
 # 2. to build disk images to upload to digitalocean as starting points
 {
   network-file,                     # this is the path to the network file
-  outputs ? "[]",                     # keys to select in the outputs
+  tag ? "",                         # the tag which will identify this machine in do.
+  outputs ? "[]",                   # keys to select in the outputs
   pkgs ? (import <nixpkgs> {}),     # the nixpkgs to use
   hosts ? "{}",                     # map from existing hostname to ip
                                     #  address, used to construct hosts
@@ -35,6 +36,7 @@ let
         value # the user's config
         ./digitalocean.nix # extras to talk to platform
         ./options.nix # option definitions for deployment.*
+        ({lib, ...}:{ deployment.digitalOcean.tag = lib.mkForce tag; }) # the tag we deploy into, so we can mention it elsewhere.
         ({...}:{ networking.extraHosts = extraHosts; }) # hosts from below
       ];
     }).config)

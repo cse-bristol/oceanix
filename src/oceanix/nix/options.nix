@@ -23,6 +23,11 @@ with pkgs.lib;
         The image should be booting a nixos install that you can ssh into.
       '';
     };
+    deployment.digitalOcean.tag = mkOption {
+      type = types.str;
+      default = "";
+      description = "The tag identifying this deployment. Comes from outside.";
+    };
     deployment.sshKey = mkOption {
       type = types.str;
       description = ''
@@ -42,7 +47,7 @@ with pkgs.lib;
     deployment.activateAfter = mkOption {
       type = types.listOf types.string;
       default = [];
-      description = "Names of machines in the network that have to have their new configuration activated before this one.";
+      description = "Names of machines in the network that have to have their new configuration activated before this one. Not implemented.";
     };
   };
 

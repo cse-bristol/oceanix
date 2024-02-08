@@ -22,6 +22,12 @@ with pkgs.lib;
         apply = value: if value == null then null else toString value;
       };
 
+      options.transient = mkOption {
+        default = true;
+        types = types.boolean;
+        description = "Wipe key on reboot if true; restore from a copy on the machine otherwise.";
+      };
+      
       options.user = mkOption {
         default = "root";
         type = types.str;
@@ -57,6 +63,15 @@ with pkgs.lib;
     };
 
     config = {
+      systemd.services."persistent-keys" = {
+        description = "Ensure symlinks from /var/keys to /run/keys";
+        enable = true;
+        script = ''
+          cp -nrs /var/keys/. /run/keys/
+        '';
+        # start on boot.
+        wantedBy = ["multi-user.target"];
+      };
       systemd.services."keys@" = {
         description = "Awaiting presence of key %i";
 
@@ -67,6 +82,7 @@ with pkgs.lib;
             until-there = pkgs.writeScript "until-there.sh" ''
               #!${pkgs.bash}/bin/bash
               tgt="/run/keys/$1"
+              echo "Waiting for key $tgt"
               (while read f; do if [ "$f" = "$1" ]; then break; fi; done \
               < <(${iw} -qm --format '%f' -e create,move /run/keys) ) &
 
@@ -79,6 +95,7 @@ with pkgs.lib;
             until-gone = pkgs.writeScript "until-gone-sh" ''
               #!${pkgs.bash}/bin/bash
               tgt="/run/keys/$1"
+              echo "Have key $tgt"
               ${iw} -qq -e delete_self "$tgt" &
               if [[ ! -e "$tgt" ]]; then
               exit 0

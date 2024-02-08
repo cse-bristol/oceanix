@@ -85,7 +85,7 @@
       (fn [{:keys [tag] :as opts} _]
         (let [network (or-env opts :network)
               tag     (or tag (our-env "DEPLOY_TAG"))]
-          (ops/build network (if tag (dc/tag-hosts tag) {}))))
+          (ops/build network tag (if tag (dc/tag-hosts tag) {}))))
       }
 
      :provision
@@ -209,7 +209,7 @@
 
 (defn deploy [network-file tag {:keys [project only-provision dry-run force] :as opts}]
   (let [existing-machines (dc/tag-hosts tag)
-        build-out      (ops/build network-file existing-machines)
+        build-out      (ops/build network-file tag existing-machines)
         plan           (ops/plan build-out tag)
         price-table    (print-price build-out)
         ]

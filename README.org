@@ -55,21 +55,31 @@ Extra things you can put in machine config or default are:
 - deployment.digitalOcean.region :: a digitalocean region slug
 - deployment.digitalOcean.image :: either the numeric ID of an image, or the *name* of an image. 
   You can make an image using ~oceanix image~ or ~oceanix base-image~.
+- deployment.digitalOcean.tag :: This isn't something you can change, but you can refer to it elsewhere in the config; for example if you have tags ~live~ and ~staging~ and you want those to go into the hostname you could say
+  #+BEGIN_SRC nix
+    networking.hostName = "my-thing-${deployment.digitalOcean.tag}";
+  #+END_SRC
+
+  Note that you can get hold of a lot of this kind of information dynamically as well using the [[https://docs.digitalocean.com/products/droplets/how-to/retrieve-droplet-metadata/][digitalocean metadata service]], but this is a little easier and more nixy.
 - deployment.sshKey :: an ssh public key; this will be enabled for root ssh login on the machine, and also added to digitalocean's cloud-init setup.
 - deployment.copies :: an integer; if > 1, this machine will be replaced with machine-1 machine-2 ... machine-n.
 - deployment.addHost :: true/false, if true this machine's ip address will be baked into /etc/hosts on all the machines against its name. For copies > 1 the addresses of every copy will be baked in.
+
 - deployment.keys :: A set of keys, like in nixops; you can write things like
 
   #+BEGIN_SRC nix
-  deployment.keys.smtp = {
-    keyFile = /path/to/secret.key;
-    user = "root"; group = "root"; permissions = "0600";
-  };
+    deployment.keys.smtp = {
+      keyFile = /path/to/secret.key;
+      user = "root"; group = "root"; permissions = "0600";
+      transient = false;
+    };
 
-  deployment.keys.fromPass.keyCommand = ["pass" "show" "secret-thing"];
+    deployment.keys.fromPass.keyCommand = ["pass" "show" "secret-thing"];
   #+END_SRC
 
-  These get copied into ~/run/keys~ on the machine. Unlike for nixops, you cannot put keys outside ~/run/keys~.
+  If you set ~transient = true~ the key is copied into ~/run/keys~ and will be lost on reboot.
+  If you set ~transient = false~ the key is copied into ~/var/keys~ and symlinked into ~/run/keys~.
+  The symlinks are restored on reboot.
 
   A bit like nixops there is a service you can depend on; it is called ~keys@keyname~ so you could say ~after = [ "keys@smtp.service" ];~ and ~wants = [ "keys@smtp.service" ];~ to wait for that key.
 

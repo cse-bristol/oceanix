@@ -29,11 +29,11 @@
   Rather than solving this properly, we just rerun the build / deploy
   until this is stable.
   "
-  [network-file tag-hosts & {:keys [outputs]
-                             :or {outputs
-                                  ["sshKey" "copies" "addHost" "keys"
-                                   "region" "size" "image"
-                                   "system"]}}]
+  [network-file tag tag-hosts & {:keys [outputs]
+                                 :or {outputs
+                                      ["sshKey" "copies" "addHost" "keys"
+                                       "region" "size" "image"
+                                       "system"]}}]
   (let [tag-hosts (json/generate-string (or tag-hosts {}))
 
         json (-> (io/file network-file)
@@ -41,6 +41,7 @@
                  (->> (sh! "nix-build"
                            network.nix
                            "--argstr" "hosts" tag-hosts
+                           "--argstr" "tag"   tag
                            "--argstr" "outputs" (json/generate-string outputs)
                            "--argstr" "network-file"))
                  (string/trim)
@@ -73,7 +74,7 @@
               {}))
         
         images ; we do build these in parallel since we are only
-               ; quering
+               ; querying
         (->> (map (juxt :region :image) defs)
              (set)
              (pmap (fn [[region image]]
@@ -154,7 +155,7 @@
 
 (def ^:const system-profile "/nix/var/nix/profiles/system")
 
-(defn transfer-key [{:keys [name keyCommand keyFile user group permissions] :as key} host]
+(defn transfer-key [{:keys [name transient keyCommand keyFile user group permissions] :as key} host]
   (let [key-str
         (cond
           (seq keyCommand)
@@ -168,8 +169,11 @@
 
           :else
           (throw (ex-info (str "key " name "could not be loaded") (assoc key :host host))))]
+    (when-not transient (sh! "ssh" host "mkdir" "-p" "/var/keys"))
     (proc/sh*
-     ["ssh" host (str "cat > \"/run/keys/" name "\"")]
+     ["ssh" host (format "cat > \"/%s/keys/%s\""
+                         (if transient "run" "var")
+                         name)]
      {:in key-str :valid-exit-code #{0}})))
 
 (defmulti realize-action  (fn [a _] (:action a)))
@@ -186,7 +190,10 @@
       (sh! "ssh" "-T" "-oStrictHostKeyChecking=no" host "nix-env" "--profile" system-profile "--set" system)
       ;; transfer required keys
 
-      (let [keys (:keys source)] (doseq [key keys] (transfer-key key host)))))
+      (let [keys (:keys source)]
+        (doseq [key keys] (transfer-key key host))
+        (when (some (comp not :transient) keys)
+          (sh! "ssh" host "systemctl" "restart" "persistent-keys.service")))))
   a)
 
 (defmethod realize-action :activate
