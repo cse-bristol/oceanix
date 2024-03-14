@@ -67,7 +67,10 @@ with pkgs.lib;
         description = "Ensure symlinks from /var/keys to /run/keys";
         enable = true;
         script = ''
-          cp -nrs /var/keys/. /run/keys/
+          if [[ -d /var/keys ]]; then
+             ${pkgs.findutils}/bin/find /run/keys -maxdepth 1 -type l -delete
+             ${pkgs.coreutils}/bin/cp -nrs /var/keys/. /run/keys/
+          fi
         '';
         # start on boot.
         wantedBy = ["multi-user.target"];
