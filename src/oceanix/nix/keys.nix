@@ -24,7 +24,7 @@ with pkgs.lib;
 
       options.transient = mkOption {
         default = true;
-        types = types.boolean;
+        type = types.boolean;
         description = "Wipe key on reboot if true; restore from a copy on the machine otherwise.";
       };
       
