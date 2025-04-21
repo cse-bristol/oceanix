@@ -103,6 +103,18 @@ $ oceanix image -n network.nix -u --spaces-bucket my-images
 
 This will create images for each machine and upload them under the name given in ~deployment.digitalOcean.image~.
 
+*** Issues
+
+If ~base-image~ fails with error
+
+~qemu-kvm: Invalid SMP CPUs 256. The max CPUs supported by machine 'pc-i440fx-8.1' is 255~
+
+- Turn off a CPU temporarily using: ~sudo chcpu -d 255~
+- Create the image
+- Then turn CPU back on: ~sudo chcpu -e 255~
+
+(May also be possible to correct using the "-smp" option to qemu-kvm)
+
 ** Deploying a network
 
 Deployments to go a digitalocean tag; if you run
